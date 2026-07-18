@@ -19,11 +19,35 @@ A future tier adds a Premiere UXP panel (a sibling of
 plugin) for one-click round trips — the file-based workflow above is the
 floor that always works, and it never depends on the panel.
 
-> **Status: pre-release scaffolding.** Contracts are specified in
-> [docs/PROTOCOL.md](docs/PROTOCOL.md); nodes are landing feature by
-> feature, and Premiere-facing claims stay flagged until the
-> [docs/SPIKES.md](docs/SPIKES.md) live imports pass. This README describes
-> each capability only once it actually ships.
+> **Status: pre-release, shipping feature by feature.** Available today:
+> **Load Premiere Timeline + Get Shot** (below). Save Premiere Timeline is
+> in final review. Contracts are specified in
+> [docs/PROTOCOL.md](docs/PROTOCOL.md); Premiere-facing claims stay flagged
+> until the [docs/SPIKES.md](docs/SPIKES.md) live imports pass. This README
+> describes each capability only once it actually ships.
+
+## Load Premiere Timeline + Get Shot (shipped)
+
+Export your edit from Premiere (`File > Export > Final Cut Pro XML`), point
+**Load Premiere Timeline** at the `.xml`, and you get:
+
+- `shots` — the edit as a shot list (every video clip's source path, in/out
+  points, rate, enabled state), in timeline order across all video tracks.
+- `count` + `summary` — one readable line per shot; wire `summary` into any
+  text-preview node for a free shot sheet.
+
+**Get Shot** pulls one shot by index: `path`, `in_seconds` /
+`duration_seconds` for time-based loaders, `in_frame` / `frame_count` for
+VideoHelperSuite's `Load Video (Path)` (`skip_first_frames` /
+`frame_load_cap`), plus `fps` and `name`. That's the "restyle my whole
+edit" building block: parse once, process each shot through any video
+workflow, using the loaders you already have.
+
+The parser handles real Premiere export noise — `pproTicks*` attributes,
+labels/filters, audio tracks, disabled clips (`skip_disabled` widget),
+file-by-id references, nested/compound clips (excluded rather than leaked),
+generator clips without media, and the `-1` boundaries Premiere writes
+around transitions.
 
 ## Install
 

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="sequence-1">
+    <uuid>11111111-2222-3333-4444-555555555555</uuid>
+    <duration>120</duration>
+    <rate>
+      <timebase>24</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <name>Clean Two Clip Sequence</name>
+    <media>
+      <video>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>intro.mp4</name>
+            <enabled>TRUE</enabled>
+            <duration>48</duration>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>48</end>
+            <in>0</in>
+            <out>48</out>
+            <file id="file-1">
+              <name>intro.mp4</name>
+              <pathurl>file://localhost/Users/eric/media/intro.mp4</pathurl>
+              <rate>
+                <timebase>24</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <duration>48</duration>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>outro.mp4</name>
+            <enabled>TRUE</enabled>
+            <duration>72</duration>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>48</start>
+            <end>120</end>
+            <in>0</in>
+            <out>72</out>
+            <file id="file-2">
+              <name>outro.mp4</name>
+              <pathurl>file://localhost/Users/eric/media/outro.mp4</pathurl>
+              <rate>
+                <timebase>24</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <duration>72</duration>
+            </file>
+          </clipitem>
+        </track>
+        <audio>
+        </audio>
+      </video>
+    </media>
+    <timecode>
+      <rate>
+        <timebase>24</timebase>
+        <ntsc>FALSE</ntsc>
+      </rate>
+      <string>00:00:00:00</string>
+      <frame>0</frame>
+      <displayformat>NDF</displayformat>
+    </timecode>
+  </sequence>
+</xmeml>

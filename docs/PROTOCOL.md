@@ -46,7 +46,9 @@ output tree:
   `timeline`).
 - Re-running with the same `sequence_name` OVERWRITES the directory's files
   in place (deterministic paths are what makes re-import painless); users
-  who want history put a date in the name.
+  who want history put a date in the name. Overwrite is per-file, not a
+  directory sync: a re-run with FEWER clips leaves the earlier run's extra
+  `media/` files behind (harmless; documented v1 behavior).
 - All timeline files reference media by ABSOLUTE path (§4.3) — same-machine
   or shared-drive import links without relinking.
 
@@ -104,12 +106,18 @@ sequence
   uuid, duration, rate(timebase,ntsc), name
   media
     video
-      format/samplecharacteristics (rate, width, height)   ← from clip 1
+      format/samplecharacteristics (rate = SEQUENCE rate;
+                                    width/height ← from clip 1)
       track
         clipitem (one per clip; see §4.4)
     audio                                                   ← v1: EMPTY track
   timecode (rate, string "00:00:00:00", frame 0, displayformat NDF/DF)
 ```
+
+The format block describes the SEQUENCE's editing format, so its `rate` is
+the §4.2 sequence rate (matching what real Premiere exports carry there);
+only the pixel dimensions are borrowed from clip 1, v1's stand-in for a
+dedicated resolution widget.
 
 Audio: v1 writes an empty audio track (video-only edit). Linked audio is a
 contracted follow-up (§9 S5) — do NOT half-emit `<audio>` clipitems.
@@ -196,8 +204,11 @@ nodes → per-shot processing ("restyle my whole edit").
   in ascending `start` order (track 1 first on ties). Per shot it captures:
   `name`, `path` (decoded §4.3 pathurl; percent-decoding + `file://` and
   `file://localhost/` forms), `start`/`end` (timeline frames), `in`/`out`
-  (source frames), `sequence_fps`, `source_fps` (file rate when present,
-  else sequence rate), `enabled`.
+  (source frames), `sequence_fps`, `source_fps` (three-tier: the clipitem's
+  own rate when present — a real Premiere clipitem's rate can genuinely
+  diverge from its file's — else the file's rate, else the sequence rate;
+  this is the rate the clip's `in`/`out` frame numbers are counted in),
+  `enabled`.
 - Disabled clipitems are kept (flagged `enabled: false`) — the summary
   marks them; a `skip_disabled` BOOLEAN widget (default True) excludes them
   from `shots`/`count`.
@@ -219,7 +230,11 @@ wire into cprb consumers; contents are documented here and FROZEN.
   `fps` (FLOAT — source fps), `name` (STRING).
 - The frame outputs feed VHS `Load Video (Path)`'s `skip_first_frames` /
   `frame_load_cap` directly; the seconds outputs suit core loaders —
-  existing nodes do the actual media reading (ethos §1).
+  existing nodes do the actual media reading (ethos §1). Note: the frame
+  outputs are counted in `source_fps` (§6.1's three-tier rate — the rate
+  the edit expressed them in). For normal footage that equals the file's
+  native rate; for a clip Premiere conformed to a different rate, prefer
+  the SECONDS outputs, which are always real-time-correct.
 
 ## §7 Routes & frontend
 

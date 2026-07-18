@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="sequence-1" TL.SQAudioVisibleBase="0" TL.SQVideoVisibleBase="0" explodedTracks="true">
+    <uuid>99999999-8888-7777-6666-555555555555</uuid>
+    <duration>210</duration>
+    <rate>
+      <timebase>30</timebase>
+      <ntsc>TRUE</ntsc>
+    </rate>
+    <name>Noisy Premiere Sequence</name>
+    <media>
+      <video>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>30</timebase>
+              <ntsc>TRUE</ntsc>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+            <pixelaspectratio>square</pixelaspectratio>
+          </samplecharacteristics>
+        </format>
+        <track TL.SQTrackShy="0" MZ.TrackTargeted="1">
+          <clipitem id="clipitem-1" frameBlend="FALSE">
+            <masterclipid>masterclip-1</masterclipid>
+            <name>Interview A</name>
+            <enabled>TRUE</enabled>
+            <duration>90</duration>
+            <start>0</start>
+            <end>90</end>
+            <in>0</in>
+            <out>90</out>
+            <pproTicksIn>0</pproTicksIn>
+            <pproTicksOut>228384000000</pproTicksOut>
+            <file id="file-1">
+              <name>Interview_Take_1.mov</name>
+              <pathurl>file://localhost/D%3a/Media/Interview%20Take%201.mov</pathurl>
+              <rate>
+                <timebase>30</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <duration>90</duration>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+                <audio>
+                  <samplecharacteristics>
+                    <depth>16</depth>
+                    <samplerate>48000</samplerate>
+                  </samplecharacteristics>
+                </audio>
+              </media>
+            </file>
+            <logginginfo>
+              <description></description>
+              <scene></scene>
+              <shottake></shottake>
+            </logginginfo>
+            <labels>
+              <label2>Iris</label2>
+            </labels>
+          </clipitem>
+          <clipitem id="clipitem-2" frameBlend="FALSE">
+            <masterclipid>masterclip-2</masterclipid>
+            <name>Bad Take</name>
+            <enabled>FALSE</enabled>
+            <duration>60</duration>
+            <start>90</start>
+            <end>150</end>
+            <in>0</in>
+            <out>60</out>
+            <pproTicksIn>0</pproTicksIn>
+            <pproTicksOut>152256000000</pproTicksOut>
+            <file id="file-2">
+              <name>badtake.mov</name>
+              <pathurl>file://nas02/share/footage/badtake.mov</pathurl>
+              <duration>60</duration>
+            </file>
+            <labels>
+              <label2>Rose</label2>
+            </labels>
+          </clipitem>
+          <clipitem id="clipitem-3" frameBlend="FALSE">
+            <masterclipid>masterclip-1</masterclipid>
+            <name>Interview A (reprise)</name>
+            <enabled>TRUE</enabled>
+            <duration>60</duration>
+            <start>150</start>
+            <end>210</end>
+            <in>90</in>
+            <out>150</out>
+            <pproTicksIn>228384000000</pproTicksIn>
+            <pproTicksOut>380640000000</pproTicksOut>
+            <file id="file-1"/>
+            <logginginfo>
+              <description>Second use of the same interview file</description>
+            </logginginfo>
+            <colorinfo>
+              <lut></lut>
+            </colorinfo>
+            <labels>
+              <label2>Iris</label2>
+            </labels>
+          </clipitem>
+          <generatoritem id="generatoritem-1">
+            <name>Black Video</name>
+            <enabled>TRUE</enabled>
+            <duration>30</duration>
+            <start>210</start>
+            <end>240</end>
+            <in>0</in>
+            <out>30</out>
+            <effect>
+              <name>Black Video</name>
+              <effectid>Black Video</effectid>
+              <effectcategory>Matte</effectcategory>
+              <effecttype>generator</effecttype>
+              <mediatype>video</mediatype>
+            </effect>
+          </generatoritem>
+        </track>
+        <track TL.SQTrackShy="0" MZ.TrackTargeted="0">
+          <clipitem id="clipitem-4" frameBlend="FALSE">
+            <masterclipid>masterclip-3</masterclipid>
+            <name>B-Roll Overlay</name>
+            <duration>80</duration>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>60</start>
+            <end>140</end>
+            <in>10</in>
+            <out>90</out>
+            <pproTicksIn>36136000000</pproTicksIn>
+            <pproTicksOut>325224000000</pproTicksOut>
+            <file id="file-3">
+              <name>broll_001.mov</name>
+              <pathurl>file://localhost/Volumes/Footage/broll_001.mov</pathurl>
+              <rate>
+                <timebase>30</timebase>
+                <ntsc>TRUE</ntsc>
+              </rate>
+              <duration>800</duration>
+            </file>
+            <filter>
+              <effect>
+                <name>Gaussian Blur</name>
+                <effectid>Gaussian Blur</effectid>
+                <effectcategory>blur</effectcategory>
+                <effecttype>filter</effecttype>
+                <mediatype>video</mediatype>
+                <parameter authoringApp="PremierePro">
+                  <parameterid>blurriness</parameterid>
+                  <name>Blurriness</name>
+                  <value>12</value>
+                </parameter>
+              </effect>
+            </filter>
+            <labels>
+              <label2>Caribbean</label2>
+            </labels>
+          </clipitem>
+        </track>
+      </video>
+      <audio>
+        <track>
+          <clipitem id="clipitem-audio-1" premiereChannelType="stereo">
+            <name>dialogue.wav</name>
+            <enabled>TRUE</enabled>
+            <duration>90</duration>
+            <start>0</start>
+            <end>90</end>
+            <in>0</in>
+            <out>90</out>
+            <file id="file-audio-1">
+              <name>dialogue.wav</name>
+              <pathurl>file://localhost/Users/eric/media/dialogue.wav</pathurl>
+              <media>
+                <audio>
+                  <samplecharacteristics>
+                    <depth>16</depth>
+                    <samplerate>48000</samplerate>
+                  </samplecharacteristics>
+                </audio>
+              </media>
+            </file>
+          </clipitem>
+        </track>
+      </audio>
+    </media>
+    <timecode>
+      <rate>
+        <timebase>30</timebase>
+        <ntsc>TRUE</ntsc>
+      </rate>
+      <string>00;00;00;00</string>
+      <frame>0</frame>
+      <displayformat>DF</displayformat>
+    </timecode>
+    <labels>
+      <label2>Forest</label2>
+    </labels>
+  </sequence>
+</xmeml>

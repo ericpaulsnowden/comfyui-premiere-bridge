@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-premiere-bridge"
 description = "Round-trip video between ComfyUI and Adobe Premiere Pro: write Premiere-importable timelines (FCP7 XML / EDL) from generated or processed shots, and pull an exported Premiere edit back into ComfyUI shot by shot."
-version = "0.1.0"
+version = "0.2.0"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,3 +39,7 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Without confcutdir, pytest's Package collection imports the repo-root
+# __init__.py (ComfyUI's entry point, needs folder_paths) and every run dies
+# outside ComfyUI. Scoping collection to tests/ keeps `pytest` runnable as-is.
+addopts = "--confcutdir=tests"
