@@ -20,11 +20,31 @@ plugin) for one-click round trips — the file-based workflow above is the
 floor that always works, and it never depends on the panel.
 
 > **Status: pre-release, shipping feature by feature.** Available today:
-> **Load Premiere Timeline + Get Shot** (below). Save Premiere Timeline is
-> in final review. Contracts are specified in
+> **Save Premiere Timeline** and **Load Premiere Timeline + Get Shot**
+> (both below). Contracts are specified in
 > [docs/PROTOCOL.md](docs/PROTOCOL.md); Premiere-facing claims stay flagged
 > until the [docs/SPIKES.md](docs/SPIKES.md) live imports pass. This README
 > describes each capability only once it actually ships.
+
+## Save Premiere Timeline (shipped; import verification pending SPIKES S1)
+
+Wire up to four VIDEO inputs and/or paste absolute file paths (one per
+line), pick a sequence rate (23.976–60, drop-frame aware), and the node
+writes everything under
+`output/premiere_timelines/<sequence name>/`:
+
+- `<name>.xml` — an FCP7 XML timeline with your clips back-to-back on V1,
+  referencing media by absolute path so a same-machine `File > Import` in
+  Premiere links without a relink dialog.
+- `media/` — connected VIDEO inputs are materialized here (mp4); `paths`
+  entries are referenced **in place**, never copied or re-encoded.
+- `<name>.edl` (optional) — CMX3600 fallback with `* SOURCE FILE:` path
+  comments.
+- `<name>.otio` (optional) — written when `opentimelineio` is installed;
+  skipped with a warning otherwise (soft dependency).
+
+Output is deterministic (re-running the same name overwrites in place) and
+the node returns the `.xml` path as a STRING plus a written-files summary.
 
 ## Load Premiere Timeline + Get Shot (shipped)
 

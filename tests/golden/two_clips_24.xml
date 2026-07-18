@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="sequence-1">
+    <uuid>688e3d84-52ce-5b7e-8866-abd3636dde4d</uuid>
+    <duration>120</duration>
+    <rate>
+      <timebase>24</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <name>Two Clips</name>
+    <media>
+      <video>
+        <format>
+          <samplecharacteristics>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>001_video_1</name>
+            <enabled>TRUE</enabled>
+            <duration>48</duration>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>0</start>
+            <end>48</end>
+            <in>0</in>
+            <out>48</out>
+            <file id="file-1">
+              <name>001_video_1</name>
+              <pathurl>file://localhost/Users/eric/media/001_video_1.mp4</pathurl>
+              <rate>
+                <timebase>24</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <duration>48</duration>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>clip_02</name>
+            <enabled>TRUE</enabled>
+            <duration>72</duration>
+            <rate>
+              <timebase>24</timebase>
+              <ntsc>FALSE</ntsc>
+            </rate>
+            <start>48</start>
+            <end>120</end>
+            <in>0</in>
+            <out>72</out>
+            <file id="file-2">
+              <name>clip_02</name>
+              <pathurl>file://localhost/Users/eric/footage/clip_02.mov</pathurl>
+              <rate>
+                <timebase>24</timebase>
+                <ntsc>FALSE</ntsc>
+              </rate>
+              <duration>72</duration>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <width>1280</width>
+                    <height>720</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+          </clipitem>
+        </track>
+      </video>
+      <audio>
+        <track />
+      </audio>
+    </media>
+    <timecode>
+      <rate>
+        <timebase>24</timebase>
+        <ntsc>FALSE</ntsc>
+      </rate>
+      <string>00:00:00:00</string>
+      <frame>0</frame>
+      <displayformat>NDF</displayformat>
+    </timecode>
+  </sequence>
+</xmeml>

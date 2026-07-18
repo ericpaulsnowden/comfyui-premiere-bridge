@@ -1,0 +1,10 @@
+TITLE: Two Clips
+FCM: NON-DROP FRAME
+
+001  AX       V     C        00:00:00:00 00:00:02:00 00:00:00:00 00:00:02:00
+* FROM CLIP NAME: 001_video_1.mp4
+* SOURCE FILE: /Users/eric/media/001_video_1.mp4
+
+002  AX       V     C        00:00:00:00 00:00:03:00 00:00:02:00 00:00:05:00
+* FROM CLIP NAME: clip_02.mov
+* SOURCE FILE: /Users/eric/footage/clip_02.mov
