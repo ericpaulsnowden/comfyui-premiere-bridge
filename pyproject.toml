@@ -1,0 +1,41 @@
+[project]
+name = "comfyui-premiere-bridge"
+description = "Round-trip video between ComfyUI and Adobe Premiere Pro: write Premiere-importable timelines (FCP7 XML / EDL) from generated or processed shots, and pull an exported Premiere edit back into ComfyUI shot by shot."
+version = "0.1.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+# PyAV (`av`) is a ComfyUI core dependency and is used for probing/encoding.
+# opentimelineio is OPTIONAL (soft dependency for .otio output).
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/ericpaulsnowden/comfyui-premiere-bridge"
+
+[tool.comfy]
+# PublisherId must match the publisher created at https://registry.comfy.org
+# before the first `comfy node publish`.
+PublisherId = "REPLACE_ME"
+DisplayName = "Premiere Bridge"
+Icon = ""
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

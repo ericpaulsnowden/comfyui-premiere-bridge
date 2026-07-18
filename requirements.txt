@@ -1,0 +1,2 @@
+# Intentionally minimal: comfyui-premiere-bridge uses only stdlib + libraries
+# ComfyUI already ships (PyAV). Optional: opentimelineio for .otio output.
