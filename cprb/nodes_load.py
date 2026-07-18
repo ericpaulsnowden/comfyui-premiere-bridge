@@ -21,6 +21,15 @@ if TYPE_CHECKING:
 
 _context: BridgeContext | None = None
 
+#: One message for the one wrong file everyone will try first (PROTOCOL.md
+#: §6.1 reads Premiere's EXPORT, never its project file).
+_PRPROJ_MESSAGE = (
+    "This is a Premiere project file (.prproj) -- Premiere's internal format, "
+    "which this node can't read. In Premiere, open your sequence and use "
+    "File > Export > Final Cut Pro XML, then point this node at the exported "
+    ".xml file."
+)
+
 
 def set_context(context: BridgeContext | None) -> None:
     """Wire the shared :class:`~cprb.context.BridgeContext` into this module.
@@ -119,6 +128,11 @@ class PremiereLoadTimeline:
             return "file_path is empty -- point it at a Premiere-exported .xml file"
         if not Path(file_path).is_file():
             return f"File not found: {file_path}"
+        if file_path.strip().lower().endswith(".prproj"):
+            # The single most natural wrong file (the owner reached for it
+            # first): Premiere's own project file, a gzipped internal format
+            # this node cannot read. Say what to do instead of "bad XML".
+            return _PRPROJ_MESSAGE
         return True
 
     @classmethod
@@ -146,7 +160,16 @@ class PremiereLoadTimeline:
         if not path.is_file():
             raise FileNotFoundError(f"Premiere timeline file not found: {file_path}")
 
-        text = path.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_bytes()
+        # .prproj (or any gzip payload, magic 1f 8b) is Premiere's internal
+        # project format, not the FCP7 XML export this node reads. Catch it
+        # by extension AND by content so a renamed project file still gets
+        # the helpful message instead of "not well-formed XML" (owner hit
+        # exactly this, 2026-07-18).
+        if path.suffix.lower() == ".prproj" or raw[:2] == b"\x1f\x8b":
+            raise ValueError(_PRPROJ_MESSAGE)
+
+        text = raw.decode("utf-8", errors="replace")
         parsed: ParsedTimeline = parse_timeline(text)
 
         included = [shot for shot in parsed.shots if shot["enabled"] or not skip_disabled]

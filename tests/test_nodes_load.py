@@ -189,3 +189,34 @@ def test_get_shot_empty_list_raises():
     get_shot = PremiereGetShot()
     with pytest.raises(ValueError, match="empty"):
         get_shot.execute([], 0)
+
+
+# ------------------------------------------------------------------ .prproj
+
+
+def test_validate_inputs_names_the_prproj_mistake(tmp_path) -> None:
+    """Pointing at Premiere's own project file gets export instructions, not
+    a generic XML error (owner hit this live, 2026-07-18)."""
+    prproj = tmp_path / "My Edit.prproj"
+    prproj.write_bytes(b"\x1f\x8b" + b"\x00" * 16)
+    verdict = PremiereLoadTimeline.VALIDATE_INPUTS(str(prproj))
+    assert isinstance(verdict, str)
+    assert "Final Cut Pro XML" in verdict and ".prproj" in verdict
+
+
+def test_execute_rejects_prproj_by_extension(tmp_path) -> None:
+    prproj = tmp_path / "edit.prproj"
+    prproj.write_bytes(b"\x1f\x8b" + b"\x00" * 16)
+    node = PremiereLoadTimeline()
+    with pytest.raises(ValueError, match="Final Cut Pro XML"):
+        node.execute(str(prproj))
+
+
+def test_execute_rejects_gzip_content_even_with_xml_extension(tmp_path) -> None:
+    """A renamed project file still gets the helpful message: detection is
+    by gzip magic bytes, not just the extension."""
+    sneaky = tmp_path / "renamed.xml"
+    sneaky.write_bytes(b"\x1f\x8b" + b"\x00" * 16)
+    node = PremiereLoadTimeline()
+    with pytest.raises(ValueError, match="Final Cut Pro XML"):
+        node.execute(str(sneaky))
