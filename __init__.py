@@ -52,6 +52,8 @@ _NODE_SPECS = [
     ("nodes_save", "PremiereSaveTimeline", "Save Premiere Timeline"),
     ("nodes_load", "PremiereLoadTimeline", "Load Premiere Timeline"),
     ("nodes_load", "PremiereGetShot", "Get Shot"),
+    ("nodes_load", "PremiereIterateShots", "Iterate Shots"),
+    ("nodes_load", "PremiereShotFrame", "Get Shot Frame"),
 ]
 
 NODE_CLASS_MAPPINGS = {}
@@ -66,7 +68,7 @@ for _module_name, _class_id, _display in _NODE_SPECS:
             _configured_modules.add(_module_name)
         NODE_CLASS_MAPPINGS[_class_id] = getattr(_module, _class_id)
         NODE_DISPLAY_NAME_MAPPINGS[_class_id] = _display
-    except Exception:  # noqa: BLE001 - skip the feature, keep the pack alive
+    except Exception:  # skip the feature, keep the pack alive
         logger.exception("cprb: feature module %s failed to load", _module_name)
 
 WEB_DIRECTORY = "./web"

@@ -56,30 +56,49 @@ output tree:
 
 ### §3.1 Inputs
 
-- `video_1` … `video_4` (VIDEO, all optional) — core ComfyUI VIDEO objects.
+- `video_1`, `video_2`, … (VIDEO, all optional) — core ComfyUI VIDEO
+  objects. DYNAMIC (owner ask 2026-07-19 "why only 4 slots, grow like image
+  nodes"): the backend accepts an UNBOUNDED number of `video_N` (validated
+  via a flexible optional-inputs dict so any `video_N` passes), and the
+  frontend grows the visible sockets — a fresh empty `video_N+1` appears
+  whenever the last one is connected, and trailing empties collapse
+  (rgthree/image-batch pattern). The old fixed `video_1..4` is retired.
 - `paths` (STRING, multiline, optional) — additional media, one absolute
-  path per line (blank lines and `#`-prefixed lines ignored). These are
-  referenced IN PLACE (never copied); they must exist and be probeable at
-  execution time or the run errors naming the offending line.
-- Clip order on the timeline: `video_1..4` first, then `paths` lines, top
-  to bottom, back-to-back from 00:00:00:00 on video track 1.
+  path per line (blank lines and `#`-prefixed lines ignored). They must
+  exist and be probeable at execution time or the run errors naming the
+  offending line. Referenced in place or copied per §3.2 `media`.
+- Clip order on the timeline: connected `video_N` in ascending N first,
+  then `paths` lines top to bottom, back-to-back from 00:00:00:00 on video
+  track 1.
 
 ### §3.2 Widgets
 
 - `sequence_name` (STRING, default `"ComfyUI Timeline"`).
 - `fps` (COMBO of strings: `23.976, 24, 25, 29.97, 30, 50, 59.94, 60`;
   default `24`) — the SEQUENCE rate; §4.2 maps it to timebase+ntsc.
-- `write_edl` (BOOLEAN, default False).
+- `media` (COMBO, owner ask 2026-07-19): **"Link in place"** (default) vs
+  **"Collect into folder"**. Link = `paths` entries are referenced at their
+  original location (zero copy, the S1-verified behavior). Collect = each
+  `paths` entry is COPIED into `media/` and the timeline references the
+  copy — for handing the whole timeline folder to someone else, or NAS
+  media you don't want to depend on staying put. VIDEO inputs are always
+  materialized into `media/` regardless (a generated VIDEO has no source
+  file to link). The owner's NAS finding (S2) was Collect behavior applied
+  when Link was wanted — this widget is the fix.
+- `write_edl` (BOOLEAN, default False) — see §5 (an alternate interchange
+  file; most users leave it off).
 - `write_otio` (BOOLEAN, default False; missing `opentimelineio` ⇒ warning
-  in the node result, not a failure — soft dependency).
+  in the node result, not a failure — soft dependency; see the OTIO note
+  in §5).
 
 ### §3.3 Behavior
 
 - VIDEO inputs are materialized into `media/` via the VIDEO object's own
   `save_to(...)` (h264/mp4, ComfyUI's default encode path) as
-  `NNN_<sanitized name>.mp4`. v1 deliberately does not re-encode `paths`
-  entries (zero-generation-loss reference in place). ProRes materialization
-  is a follow-up pending SPIKES §S3.
+  `NNN_<sanitized name>.mp4`. `paths` entries: LINKED in place under
+  `media: "Link in place"` (zero re-encode, zero copy), or COPIED verbatim
+  into `media/` under `media: "Collect into folder"` (byte copy, no
+  re-encode). ProRes materialization is a follow-up pending SPIKES §S3.
 - Every clip's duration comes from probing the on-disk file with PyAV
   (frames + native fps); the clip occupies `round(seconds * sequence_fps)`
   sequence frames. Sources whose native fps differs from the sequence fps
@@ -208,7 +227,10 @@ nodes → per-shot processing ("restyle my whole edit").
   own rate when present — a real Premiere clipitem's rate can genuinely
   diverge from its file's — else the file's rate, else the sequence rate;
   this is the rate the clip's `in`/`out` frame numbers are counted in),
-  `enabled`.
+  `enabled`, and (added 2026-07-19) `width`/`height` from the clip's
+  `<file><media><video><samplecharacteristics>` (`0` when the export omits
+  them — real Premiere exports and our own writer include them; §8 permits
+  adding keys).
 - Disabled clipitems are kept (flagged `enabled: false`) — the summary
   marks them; a `skip_disabled` BOOLEAN widget (default True) excludes them
   from `shots`/`count`.
@@ -225,16 +247,51 @@ wire into cprb consumers; contents are documented here and FROZEN.
 
 - Inputs: `shots` (CPRB_SHOT_LIST); widget `index` (INT, 0-based, default
   0; out of range ⇒ clear error naming the valid range).
-- Outputs: `path` (STRING), `in_seconds` (FLOAT — source in ÷ source_fps),
-  `duration_seconds` (FLOAT), `in_frame` (INT), `frame_count` (INT),
-  `fps` (FLOAT — source fps), `name` (STRING).
-- The frame outputs feed VHS `Load Video (Path)`'s `skip_first_frames` /
-  `frame_load_cap` directly; the seconds outputs suit core loaders —
-  existing nodes do the actual media reading (ethos §1). Note: the frame
-  outputs are counted in `source_fps` (§6.1's three-tier rate — the rate
-  the edit expressed them in). For normal footage that equals the file's
-  native rate; for a clip Premiere conformed to a different rate, prefer
-  the SECONDS outputs, which are always real-time-correct.
+- Outputs, in this order (owner reorder 2026-07-19 — the "seconds" pair and
+  the "frame" pair each swapped so the load-cap value leads its partner,
+  matching how they wire into VHS): `path` (STRING), `duration_seconds`
+  (FLOAT), `in_seconds` (FLOAT — source in ÷ source_fps), `frame_count`
+  (INT), `in_frame` (INT), `fps` (FLOAT — source fps), `name` (STRING),
+  `width` (INT), `height` (INT). ⚠ Reordering outputs shifts socket
+  indices, so a workflow saved before this change re-wires by position on
+  load — acceptable pre-release; re-check any existing Get Shot wiring once.
+- The frame outputs feed VHS `Load Video (Path)`'s `frame_load_cap`
+  (`frame_count`) / `skip_first_frames` (`in_frame`) directly; the seconds
+  outputs suit core loaders; `width`/`height` feed resize/crop or a Create
+  Video (ethos §1: existing nodes do the reading). The frame outputs are
+  counted in `source_fps` (§6.1's three-tier rate); for a clip Premiere
+  conformed to a different rate, prefer the SECONDS outputs, always
+  real-time-correct.
+
+### §6.4 `PremiereIterateShots` (display: "Iterate Shots")
+
+The answer to "how do I process every shot" (owner ask 2026-07-19) — ComfyUI
+has no for-loop, so this fans out via list execution, exactly like EPSNodes'
+multi-select notebook.
+
+- Input: `shots` (CPRB_SHOT_LIST); widget `skip_disabled` is unnecessary
+  (Load already filtered) — none.
+- Outputs mirror Get Shot's set (`path, duration_seconds, in_seconds,
+  frame_count, in_frame, fps, name, width, height`) but ALL declared
+  `OUTPUT_IS_LIST` — one element per shot, in shot order. ComfyUI then runs
+  every downstream node once per shot from a SINGLE queue: wire `path`+the
+  frame outputs into VHS `Load Video (Path)` and one Run processes the
+  whole edit shot by shot. An empty shot list yields empty lists (downstream
+  simply doesn't run) — not an error.
+
+### §6.5 `PremiereShotFrame` (display: "Get Shot Frame")
+
+Optional preview thumbnail (owner ask 2026-07-19 "can we pull a preview
+frame… if easy/reliable"). SEPARATE node so the decode cost/failure never
+touches Get Shot's cheap metadata path.
+
+- Inputs: `shots` (CPRB_SHOT_LIST); widget `index` (INT, like Get Shot).
+- Output: `image` (IMAGE) — one frame decoded via PyAV at the shot's
+  `in` point (seek to `in_seconds`, decode the nearest frame, return HWC
+  RGB float [0,1], batch 1). Best-effort: media offline/undecodable ⇒ a
+  clear error naming the file (the owner's fallback is "rely on VHS", so a
+  hard error here is fine — he simply won't wire this node). No decode
+  happens unless this node is in the graph.
 
 ## §7 Routes & frontend
 
@@ -256,7 +313,7 @@ the nodes changes. Same rule and rationale as EPSNodes' FORMAT.md §2.
 |---|---|
 | `GET /cprb/version` | `{"version": "X.Y.Z"}` |
 | `GET /cprb/config` | `{"is_local": bool, "output_dir": <abs>, "input_dir": <abs>}` — `is_local` is the §7.1 verdict for THIS caller (gates the buttons); the dirs seed the picker's starting location |
-| `GET /cprb/fs/list?dir=&ext=` | **loopback-only.** Server-filesystem browser. Empty/missing `dir` ⇒ `output_dir`. `ext` = a comma-separated extension allowlist (default `.xml`; always case-insensitive). → `{"dir": <abs>, "parent": <abs or null>, "dirs": [names], "files": [names]}`, entries sorted case-insensitively; non-absolute `dir` ⇒ 400; unreadable ⇒ 400 |
+| `GET /cprb/fs/list?dir=&ext=` | **loopback-only.** Server-filesystem browser. Empty/missing `dir` ⇒ `output_dir`. `dir="ROOTS"` (sentinel) ⇒ the top level: on Windows every existing drive (`C:\`, `D:\`, `U:\`, …) as `dirs` with `parent: null`; on POSIX the filesystem root `/`. `ext` = a comma-separated extension allowlist (default `.xml`; always case-insensitive). → `{"dir": <abs or "ROOTS">, "parent": <abs, "ROOTS", or null>, "dirs": [names], "files": [names]}`, entries sorted case-insensitively; a directory at a drive root reports `parent: "ROOTS"` so the picker can climb to the drive list (the 2026-07-19 "stuck at top of C:\, can't reach another drive/NAS" fix); a UNC path (`\\server\share\…`) lists normally, its share root reporting `parent: null`; non-absolute `dir` (other than `ROOTS`) ⇒ 400; unreadable ⇒ 400 |
 | `POST /cprb/open_folder` `{"path"}` | **loopback-only.** Reveals *path* in the OS file manager ON THE SERVER MACHINE (Explorer/Finder): a file reveals its parent folder, a directory reveals itself. Missing ⇒ 404; spawn failure ⇒ 500; `{"ok": true}` |
 | `GET /cprb/timeline_dir?sequence_name=` | `{"dir": <abs>, "exists": bool}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name` |
 

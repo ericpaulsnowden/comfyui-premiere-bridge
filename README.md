@@ -26,7 +26,7 @@ floor that always works, and it never depends on the panel.
 > until the [docs/SPIKES.md](docs/SPIKES.md) live imports pass. This README
 > describes each capability only once it actually ships.
 
-## Save Premiere Timeline (shipped; import verification pending SPIKES S1)
+## Save Premiere Timeline (shipped; Premiere import verified — SPIKES S1 passed 2026-07-19)
 
 Wire up to four VIDEO inputs and/or paste absolute file paths (one per
 line), pick a sequence rate (23.976–60, drop-frame aware), and the node

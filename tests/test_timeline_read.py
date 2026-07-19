@@ -61,6 +61,11 @@ def test_clean_two_clip_shot_contents_and_order():
     parsed = parse_timeline(_fixture_text("clean_two_clip.xml"))
     intro, outro = parsed.shots
 
+    # Neither clipitem's <file> in this fixture carries a
+    # <media><video><samplecharacteristics> block, so width/height default
+    # to 0 -- the "absent" half of the width/height contract (PROTOCOL.md
+    # §6.1); the "present" half is covered against noisy_premiere_export.xml
+    # and the inline tests below.
     assert intro == {
         "name": "intro.mp4",
         "path": "/Users/eric/media/intro.mp4",
@@ -71,6 +76,8 @@ def test_clean_two_clip_shot_contents_and_order():
         "sequence_fps": pytest.approx(24.0),
         "source_fps": pytest.approx(24.0),
         "enabled": True,
+        "width": 0,
+        "height": 0,
     }
     assert outro == {
         "name": "outro.mp4",
@@ -82,6 +89,8 @@ def test_clean_two_clip_shot_contents_and_order():
         "sequence_fps": pytest.approx(24.0),
         "source_fps": pytest.approx(24.0),
         "enabled": True,
+        "width": 0,
+        "height": 0,
     }
 
 
@@ -173,6 +182,29 @@ def test_noisy_source_fps_rate_tiers():
     # file's <rate> says something else (30/TRUE = 29.97).
     broll = _find(parsed.shots, "B-Roll Overlay")
     assert broll["source_fps"] == pytest.approx(24.0)
+
+
+def test_noisy_width_height_from_file_samplecharacteristics():
+    parsed = parse_timeline(_fixture_text("noisy_premiere_export.xml"))
+    # file-1 carries <media><video><samplecharacteristics><width>1920</width>
+    # <height>1080</height></samplecharacteristics></video></media>.
+    interview_a = _find(parsed.shots, "Interview A")
+    assert interview_a["width"] == 1920
+    assert interview_a["height"] == 1080
+    # "Interview A (reprise)" references file-1 via a self-closing
+    # <file id="file-1"/> -- dimensions must resolve through the SAME
+    # registry entry _resolve_source_fps already uses for source_fps.
+    reprise = _find(parsed.shots, "Interview A (reprise)")
+    assert reprise["width"] == 1920
+    assert reprise["height"] == 1080
+    # file-2 ("Bad Take") and file-3 ("B-Roll Overlay") carry no
+    # <media><video><samplecharacteristics> at all -- absent defaults to 0.
+    bad_take = _find(parsed.shots, "Bad Take")
+    assert bad_take["width"] == 0
+    assert bad_take["height"] == 0
+    broll = _find(parsed.shots, "B-Roll Overlay")
+    assert broll["width"] == 0
+    assert broll["height"] == 0
 
 
 def test_noisy_skip_disabled_semantics_at_parse_level():
@@ -360,6 +392,96 @@ def test_ntsc_23976_rate_math():
     )
     parsed = parse_timeline(text)
     assert _find(parsed.shots, "NTSC24 Clip")["source_fps"] == pytest.approx(23.976, abs=1e-3)
+
+
+# --- width/height (PROTOCOL.md §6.1, added 2026-07-19) ------------------------------
+
+
+def test_width_height_read_from_file_samplecharacteristics():
+    text = _wrap(
+        """
+        <track>
+          <clipitem id="clipitem-1">
+            <name>Clip A</name>
+            <start>0</start><end>48</end><in>0</in><out>48</out>
+            <file id="file-1">
+              <name>clip_a.mov</name>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <width>1280</width>
+                    <height>720</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+          </clipitem>
+        </track>
+        """
+    )
+    parsed = parse_timeline(text)
+    assert parsed.shots[0]["width"] == 1280
+    assert parsed.shots[0]["height"] == 720
+
+
+def test_width_height_absent_defaults_to_zero():
+    text = _wrap(
+        """
+        <track>
+          <clipitem id="clipitem-1">
+            <name>Clip A (file, no samplecharacteristics)</name>
+            <start>0</start><end>48</end><in>0</in><out>48</out>
+            <file id="file-1">
+              <name>clip_a.mov</name>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>Clip B (no file at all)</name>
+            <start>48</start><end>96</end><in>0</in><out>48</out>
+          </clipitem>
+        </track>
+        """
+    )
+    parsed = parse_timeline(text)
+    assert parsed.shots[0]["width"] == 0
+    assert parsed.shots[0]["height"] == 0
+    assert parsed.shots[1]["width"] == 0
+    assert parsed.shots[1]["height"] == 0
+
+
+def test_width_height_resolved_through_file_id_reference():
+    # Same id-reference convention _resolve_source_fps relies on (module
+    # docstring) -- clipitem-2's self-closing <file id="file-1"/> must
+    # resolve dimensions through the SAME registered file-1 definition.
+    text = _wrap(
+        """
+        <track>
+          <clipitem id="clipitem-1">
+            <name>Clip A</name>
+            <start>0</start><end>48</end><in>0</in><out>48</out>
+            <file id="file-1">
+              <name>clip_a.mov</name>
+              <media>
+                <video>
+                  <samplecharacteristics>
+                    <width>1920</width>
+                    <height>1080</height>
+                  </samplecharacteristics>
+                </video>
+              </media>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>Clip A (reprise)</name>
+            <start>48</start><end>96</end><in>0</in><out>48</out>
+            <file id="file-1"/>
+          </clipitem>
+        </track>
+        """
+    )
+    parsed = parse_timeline(text)
+    assert parsed.shots[1]["width"] == 1920
+    assert parsed.shots[1]["height"] == 1080
 
 
 def test_missing_name_falls_back_to_file_name_then_clip_n():

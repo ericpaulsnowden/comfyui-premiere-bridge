@@ -54,6 +54,19 @@
  * allowlist (`.xml`) as a query param instead of a fixed extension baked
  * into the route.
  *
+ * 2026-07-19: two additions on top of the port, both local to this file,
+ * both in service of PROTOCOL.md §7.2's same-day `ROOTS` sentinel fix
+ * (the picker could reach the top of C:\ but no further): (1) `..`/`dirs`
+ * rows now branch on `FS_ROOTS` so a drive root's `parent` climbs to the
+ * drive list instead of dead-ending, and a drive-list row navigates
+ * straight to that drive rather than joining it onto the literal string
+ * `"ROOTS"`; (2) a path bar pinned above the navigable area — its own
+ * `.cprb-picker-content` child now, so replacing that child on every
+ * navigation never wipes the bar — where typing/pasting ANY absolute path
+ * (a UNC share, another drive) jumps there directly, independent of
+ * what `ROOTS` happens to enumerate on this machine; a bad path 400s into
+ * the same inline error state the rest of the picker already used.
+ *
  * Vanilla ES modules, no build step, matching the rest of this pack.
  */
 
@@ -69,10 +82,16 @@ const WIDGET_TYPE = 'cprb_file_bar'
 /** One short row of buttons + a status line — kept fixed so the DOM
  * widget never balloons a small node's default size (both min and max are
  * set to this same value; see attachBarWidget()). */
-const BAR_HEIGHT = 30
+const BAR_HEIGHT = 34
 
 /** §7.2's `fs/list` extension allowlist for the Load node's picker. */
 const PICKER_EXT = '.xml'
+
+/** §7.2's `fs/list` sentinel for "the top level" — every Windows drive, or
+ * the POSIX filesystem root. A drive root's own `parent` echoes this back
+ * too, so the picker's `..` row climbs here instead of getting stuck at
+ * the top of one drive (the 2026-07-19 fix). */
+const FS_ROOTS = 'ROOTS'
 
 const STYLE_TAG_ID = 'cprb-node-ui-styles'
 const PICKER_OVERLAY_ID = 'cprb-picker-overlay'
@@ -168,6 +187,35 @@ const CSS_TEXT = `
   font-family: inherit;
   font-size: 11px;
   color: var(--input-text, #ccc);
+}
+.cprb-picker-pathbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color, #444);
+}
+.cprb-picker-path-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--comfy-input-bg, #1e1e1e);
+  border: 1px solid var(--border-color, #444);
+  color: var(--input-text, #ccc);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+.cprb-picker-path-input:focus {
+  outline: 1px solid var(--input-focus-border, #5c9dff);
+}
+.cprb-picker-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .cprb-picker-header {
   flex: 0 0 auto;
@@ -436,6 +484,19 @@ function attachBarWidget(node, barEl) {
     getMinHeight: () => BAR_HEIGHT,
     getMaxHeight: () => BAR_HEIGHT
   })
+  // Fixed compact height, the ROBUST way. `getMinHeight`/`getMaxHeight`
+  // alone are IGNORED for a small standalone DOM widget on the Vue-node
+  // renderer (verified live 2026-07-19: the bar collapsed to ~7px and its
+  // buttons clipped past the node's bottom edge — the "broken visuals" the
+  // owner reported). This frontend sizes a widget from the classic
+  // `computeSize`/`computedHeight` pair instead, and the `size-full` DOM
+  // wrapper then needs the element itself to carry the height. Setting all
+  // three is what actually reserves the row. (notebook.js's file panel only
+  // looked fine because it rides inside that node's large FILL widget.)
+  domWidget.computeSize = (width) => [width, BAR_HEIGHT]
+  domWidget.computedHeight = BAR_HEIGHT
+  barEl.style.height = `${BAR_HEIGHT}px`
+  barEl.style.minHeight = `${BAR_HEIGHT}px`
   domWidget.serialize = false
   domWidget.serializeValue = () => undefined
   return domWidget
@@ -529,6 +590,7 @@ function closePicker(state) {
     window.removeEventListener('keydown', state.pickerKeydownHandler)
     state.pickerKeydownHandler = null
   }
+  state.pickerPathInputEl = null
 }
 
 function openPicker(state) {
@@ -551,22 +613,79 @@ function openPicker(state) {
   }
   window.addEventListener('keydown', state.pickerKeydownHandler)
 
+  // The navigable area is its own child so the path bar built next (which
+  // sits above it, for the picker's whole lifetime) is never wiped out by
+  // loadPickerDir()'s replaceChildren() calls.
+  const content = el('div', { className: 'cprb-picker-content' })
+  dialog.append(buildPickerPathBar(state, content), content)
+
   // PROTOCOL.md §7.3: "starting dir: the widget's current value's folder
   // when it looks absolute, else omit dir (server defaults to output_dir)".
   const currentValue = state.fileWidget.value
   const startDir = looksAbsolutePath(currentValue) ? dirnameOfServerPath(currentValue) : null
-  loadPickerDir(state, dialog, startDir)
+  loadPickerDir(state, content, startDir)
 }
 
-async function loadPickerDir(state, dialog, dir) {
-  dialog.replaceChildren(el('div', { className: 'cprb-picker-status', text: 'Loading…' }))
+/**
+ * The picker's "type/paste any absolute path" escape hatch — a UNC share
+ * or another drive, independent of §7.2's drive enumeration (which only
+ * ever lists drives that already exist on the SERVER machine; a mapped
+ * NAS path typed here doesn't need to be one of them). Pinned above
+ * *content* for the picker's whole lifetime. Go and Enter both navigate
+ * through the SAME loadPickerDir() every row uses, so a bad path surfaces
+ * the same inline error as any other failed navigation (never closes the
+ * dialog).
+ * @param {object} state
+ * @param {HTMLElement} content - the picker's navigable-area container.
+ * @returns {HTMLElement} the path bar's root element.
+ */
+function buildPickerPathBar(state, content) {
+  const input = el('input', {
+    className: 'cprb-picker-path-input',
+    attrs: {
+      type: 'text',
+      placeholder: String.raw`\\server\share or D:\clips`,
+      spellcheck: 'false',
+      autocomplete: 'off'
+    }
+  })
+  const goBtn = el('button', {
+    className: 'cprb-btn cprb-btn-small',
+    text: 'Go',
+    attrs: { title: 'Go to this path' }
+  })
+
+  const goToTypedPath = () => {
+    const typed = input.value.trim()
+    if (!typed) return
+    loadPickerDir(state, content, typed)
+  }
+  goBtn.addEventListener('click', goToTypedPath)
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    goToTypedPath()
+  })
+
+  state.pickerPathInputEl = input
+  return el('div', { className: 'cprb-picker-pathbar' }, [input, goBtn])
+}
+
+async function loadPickerDir(state, content, dir) {
+  content.replaceChildren(el('div', { className: 'cprb-picker-status', text: 'Loading…' }))
   let data
   try {
     data = await api.getJson('/cprb/fs/list', dir ? { dir, ext: PICKER_EXT } : { ext: PICKER_EXT })
   } catch (error) {
     api.warn('fs/list failed', error)
-    dialog.replaceChildren(
-      el('div', { className: 'cprb-picker-header', text: 'Browse' }),
+    // PROTOCOL.md §7.2: a bad/unreadable `dir` (typed by hand or not) is a
+    // 400 — shown inline, right here, and the dialog otherwise stays put.
+    content.replaceChildren(
+      el('div', {
+        className: 'cprb-picker-header',
+        text: frontTruncate(dir || 'Browse'),
+        attrs: { title: dir || '' }
+      }),
       el('div', {
         className: 'cprb-picker-status cprb-picker-error',
         text: `Could not list folder: ${error.message}`
@@ -575,26 +694,43 @@ async function loadPickerDir(state, dialog, dir) {
     )
     return
   }
-  renderPickerDialog(state, dialog, data)
+  renderPickerDialog(state, content, data)
 }
 
-function renderPickerDialog(state, dialog, data) {
+function renderPickerDialog(state, content, data) {
+  // Keep the path bar in sync with where navigation landed — clicking
+  // through folder rows shouldn't leave stale typed text sitting above
+  // them. The synthetic ROOTS listing isn't a real path to show/retype,
+  // so clear it instead.
+  if (state.pickerPathInputEl) {
+    state.pickerPathInputEl.value = data.dir === FS_ROOTS ? '' : data.dir
+  }
+
+  const isRootsList = data.dir === FS_ROOTS
+  const headerText = isRootsList ? 'Drives' : data.dir
   const header = el('div', {
     className: 'cprb-picker-header',
-    text: frontTruncate(data.dir),
-    attrs: { title: data.dir }
+    text: frontTruncate(headerText),
+    attrs: { title: headerText }
   })
   const list = el('div', { className: 'cprb-picker-list' })
 
-  if (data.parent) {
+  if (data.parent !== null) {
     const upRow = el('div', { className: 'cprb-picker-row', text: '.. (parent folder)' })
-    upRow.addEventListener('click', () => loadPickerDir(state, dialog, data.parent))
+    // `data.parent` is either an absolute path or the FS_ROOTS sentinel (a
+    // drive root climbing back to the drive list) — either way it's just
+    // the next `dir=` to fetch, no special-casing needed here.
+    upRow.addEventListener('click', () => loadPickerDir(state, content, data.parent))
     list.append(upRow)
   }
   for (const name of data.dirs || []) {
-    // Trailing slash marks a folder row — no emoji, plain and unambiguous.
-    const row = el('div', { className: 'cprb-picker-row', text: `${name}/` })
-    row.addEventListener('click', () => loadPickerDir(state, dialog, joinServerPath(data.dir, name)))
+    // At the ROOTS listing, `dirs` are already full drive roots (e.g.
+    // "C:\\") — shown and navigated to as-is. Everywhere else they're
+    // plain names: shown with a trailing slash (marks a folder row — no
+    // emoji, plain and unambiguous) and joined onto the current dir.
+    const row = el('div', { className: 'cprb-picker-row', text: isRootsList ? name : `${name}/` })
+    const target = isRootsList ? name : joinServerPath(data.dir, name)
+    row.addEventListener('click', () => loadPickerDir(state, content, target))
     list.append(row)
   }
   for (const name of data.files || []) {
@@ -605,11 +741,11 @@ function renderPickerDialog(state, dialog, data) {
     })
     list.append(row)
   }
-  if (!data.parent && !(data.dirs || []).length && !(data.files || []).length) {
+  if (data.parent === null && !(data.dirs || []).length && !(data.files || []).length) {
     list.append(el('div', { className: 'cprb-picker-empty', text: `No subfolders or ${PICKER_EXT} files here.` }))
   }
 
-  dialog.replaceChildren(header, list, buildPickerFooter(state))
+  content.replaceChildren(header, list, buildPickerFooter(state))
 }
 
 function buildPickerFooter(state) {
@@ -649,6 +785,7 @@ function attachLoadUi(node) {
     fileWidget,
     isLocal: null,
     pickerKeydownHandler: null,
+    pickerPathInputEl: null,
     noteEl: null,
     statusEl: null,
     gatedButtons: [],
@@ -717,6 +854,7 @@ function attachSaveUi(node) {
     sequenceNameWidget,
     isLocal: null,
     pickerKeydownHandler: null,
+    pickerPathInputEl: null,
     noteEl: null,
     statusEl: null,
     gatedButtons: [],

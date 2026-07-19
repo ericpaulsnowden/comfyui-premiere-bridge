@@ -80,10 +80,13 @@ class ParsedTimeline:
             clip's rate. Falls back to ``24.0`` if the sequence carries no
             parseable ``<rate>`` at all.
         shots: One dict per video ``<clipitem>``, ascending ``start``
-            (track document-order on ties). Keys FROZEN per PROTOCOL.md
-            §6.2: ``name, path, start, end, in, out, sequence_fps,
-            source_fps, enabled``. Includes disabled clips (``enabled:
-            False``) -- filtering them out is ``PremiereLoadTimeline``'s
+            (track document-order on ties). Keys per PROTOCOL.md §6.2: the
+            frozen ``name, path, start, end, in, out, sequence_fps,
+            source_fps, enabled``, plus (added 2026-07-19, an append-only
+            §8 extension) ``width``/``height`` from the clip's resolved
+            ``<file><media><video><samplecharacteristics>`` (``0``/``0``
+            when absent). Includes disabled clips (``enabled: False``) --
+            filtering them out is ``PremiereLoadTimeline``'s
             ``skip_disabled`` widget's job, not this module's.
     """
 
@@ -166,6 +169,8 @@ def parse_timeline(text: str) -> ParsedTimeline:
                 "sequence_fps": sequence_fps,
                 "source_fps": record["source_fps"],
                 "enabled": record["enabled"],
+                "width": record["width"],
+                "height": record["height"],
             }
         )
 
@@ -209,6 +214,7 @@ def _extract_clip(
     file_el = _resolve_file_element(clip, file_registry)
     file_name = _text(file_el.find("name")) if file_el is not None else ""
     pathurl = _text(file_el.find("pathurl")) if file_el is not None else ""
+    width, height = _resolve_dimensions(file_el)
 
     return {
         "name": _text(clip.find("name")),
@@ -220,6 +226,8 @@ def _extract_clip(
         "out": _int_or(clip.find("out"), 0),
         "source_fps": _resolve_source_fps(clip, file_el, sequence_fps),
         "enabled": _text(clip.find("enabled")).upper() != "FALSE",
+        "width": width,
+        "height": height,
     }
 
 
@@ -241,6 +249,27 @@ def _resolve_source_fps(clip: ET.Element, file_el: ET.Element | None, sequence_f
     if file_rate is not None:
         return _parse_rate(file_rate, default=sequence_fps)
     return sequence_fps
+
+
+def _resolve_dimensions(file_el: ET.Element | None) -> tuple[int, int]:
+    """``(width, height)`` from *file_el*'s ``<media><video><samplecharacteristics>``.
+
+    *file_el* is the SAME element :func:`_resolve_source_fps` already
+    resolved through the id-reference registry (module docstring;
+    :func:`_resolve_file_element`) -- no separate lookup, so a clip whose
+    ``<file id="X"/>`` is a self-closing reference gets the referenced
+    definition's dimensions exactly like it gets that definition's rate.
+    ``(0, 0)`` when *file_el* is ``None`` (a compound/nested-sequence clip,
+    or a ``<file>`` with only ``<mediaSource>``, module docstring) or the
+    export simply omits the block -- tolerant per §6.1, same convention as
+    every other optional field this parser reads.
+    """
+    if file_el is None:
+        return 0, 0
+    samplechar = file_el.find("media/video/samplecharacteristics")
+    if samplechar is None:
+        return 0, 0
+    return _int_or(samplechar.find("width"), 0), _int_or(samplechar.find("height"), 0)
 
 
 def _resolve_file_element(

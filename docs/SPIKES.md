@@ -10,11 +10,13 @@ These spikes need **Adobe Premiere Pro** (Eric's PC; version must be noted —
 UXP spikes need ≥ 25.6). None of them block Tier 1 development; S1/S2 gate
 calling the XML output "verified" in the README.
 
-- [ ] **S1 — golden XML import.** `File > Import` a
+- [x] **S1 — golden XML import.** `File > Import` a
   `premiere_timelines/<name>/<name>.xml` produced by Save Premiere Timeline
   on the SAME machine as the media paths. Expect: a new sequence appears,
   every clip online (no relink dialog), cuts at the expected frames,
-  sequence timebase per PROTOCOL §4.2.
+  sequence timebase per PROTOCOL §4.2. **PASSED — Eric, 2026-07-19** (see
+  LIVE RESULTS). This retires the "import verification pending" caveat the
+  README carried on Save Premiere Timeline.
 - [ ] **S2 — UNC pathurl.** Same import where media lives on
   `\\nas\share\…`. Records which pathurl form Premiere links
   (`file://nas/share/…` vs `file://localhost/\\nas\…` vs mapped drive).
@@ -38,4 +40,13 @@ calling the XML output "verified" in the README.
 
 ## LIVE RESULTS
 
-*(none yet)*
+- **S1 — PASSED (Eric, 2026-07-19).** A `Save Premiere Timeline` `.xml`
+  imported into Premiere on the PC (Premiere 26.0): the sequence appeared
+  with clips at the expected cuts and media online, no relink dialog. The
+  ComfyUI→XML→Premiere round trip is real. (Verified alongside
+  `Load Premiere Timeline` parsing a real Premiere FCP7-XML export back
+  into a correct shot list — the reverse direction — same session.)
+- **S2 — still open, with a design change (Eric, 2026-07-19).** Pointing at
+  NAS media worked but the node COPIED it into `media/`; Eric wants a
+  LINK-vs-COLLECT choice. Being added (PROTOCOL §3.3 media mode); the UNC
+  pathurl form (§4.3) is retested once media is LINKED, not collected.

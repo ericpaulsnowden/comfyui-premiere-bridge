@@ -1,12 +1,15 @@
 """The ``PremiereSaveTimeline`` ComfyUI node (PROTOCOL.md §3).
 
-Assembles whatever combination of ``video_1..video_4`` VIDEO inputs and
-``paths`` lines the user connected/typed into an ordered list of
-:class:`~cprb.timeline_write.ClipSpec`, probes each one, and hands them to
-:mod:`cprb.timeline_write` (the pure serializer this module never
-duplicates any formatting logic from) to write ``.xml`` (always),
-``.edl``/``.otio`` (per widget) into ``context.timeline_dir(sequence_name)``
-(PROTOCOL.md §2).
+Assembles whatever combination of connected ``video_N`` VIDEO inputs
+(unbounded, PROTOCOL.md §3.1) and ``paths`` lines the user connected/typed
+into an ordered list of :class:`~cprb.timeline_write.ClipSpec`, probes each
+one, and hands them to :mod:`cprb.timeline_write` (the pure serializer this
+module never duplicates any formatting logic from) to write ``.xml``
+(always), ``.edl``/``.otio`` (per widget) into
+``context.timeline_dir(sequence_name)`` (PROTOCOL.md §2). ``video_N`` inputs
+are always materialized into ``media/``; ``paths`` entries are either
+referenced in place or copied into ``media/``, per the ``media`` widget
+(§3.2 Link vs Collect).
 
 Like :mod:`cprb.routes`, this module is configured once via
 :func:`set_context` from the pack's ``__init__.py`` rather than importing
@@ -20,6 +23,8 @@ choices) never requires PyAV to be installed.
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +33,12 @@ from .context import BridgeContext, sanitize_name
 
 logger = logging.getLogger("cprb")
 
-#: PROTOCOL.md §3.1: exactly four optional VIDEO sockets, ``video_1..video_4``.
-MAX_VIDEO_INPUTS = 4
+#: PROTOCOL.md §3.1: an UNBOUNDED number of optional ``video_N`` VIDEO
+#: sockets, matched by socket number rather than a hardcoded range. Shared by
+#: :class:`_FlexibleOptionalVideoInputs` (INPUT_TYPES validation) and
+#: :func:`_video_kwargs` (execute-time collection) so both agree on what
+#: counts as a video slot.
+_VIDEO_INPUT_PATTERN = re.compile(r"video_\d+")
 
 #: §3.2's fps COMBO, in RATE_TABLE's own order -- the widget and the writer
 #: share one source of truth so they can never drift out of sync.
@@ -37,7 +46,51 @@ FPS_CHOICES: list[str] = list(timeline_write.RATE_TABLE)
 DEFAULT_FPS = "24"
 DEFAULT_SEQUENCE_NAME = "ComfyUI Timeline"
 
+#: §3.2's ``media`` COMBO: "Link in place" references each ``paths`` entry at
+#: its original absolute path (zero copy); "Collect into folder" byte-copies
+#: it into ``media/`` and references the copy instead. ``video_N`` inputs are
+#: ALWAYS materialized into ``media/`` regardless of this widget -- a
+#: generated VIDEO has no source file to link -- so ``media`` only ever
+#: changes what happens to ``paths`` entries.
+MEDIA_LINK = "Link in place"
+MEDIA_COLLECT = "Collect into folder"
+MEDIA_CHOICES = [MEDIA_LINK, MEDIA_COLLECT]
+DEFAULT_MEDIA = MEDIA_LINK
+
 _context: BridgeContext | None = None
+
+
+class _FlexibleOptionalVideoInputs(dict):
+    """The ``optional`` half of INPUT_TYPES: accepts ANY ``video_N`` key.
+
+    PROTOCOL.md §3.1's unbounded ``video_N`` needs ComfyUI's own input
+    validation -- which checks ``input_name in class_inputs['optional']``
+    (the ``in`` operator, i.e. ``__contains__``) before letting a workflow
+    wire a given input on this node -- to say yes to ``video_5``,
+    ``video_37``, etc. even though only ``video_1`` is ever actually stored
+    in this dict. Modeled on rgthree-comfy's ``FlexibleOptionalInputType``
+    trick (reimplemented locally here -- this pack does not depend on
+    rgthree): override ``__contains__`` (and, for safety, ``__getitem__`` in
+    case something subscripts rather than uses ``in``/``.get``) to treat any
+    key matching :data:`_VIDEO_INPUT_PATTERN` as present with type
+    ``("VIDEO",)``. Plain dict iteration/``.items()``/``.keys()`` is left
+    untouched, so it still only yields whatever was actually inserted
+    (``video_1``) -- which is what the ``/object_info`` endpoint (and thus
+    the frontend's default socket rendering) sees, giving the node exactly
+    one visible socket out of the box.
+    """
+
+    def __contains__(self, key: object) -> bool:
+        if isinstance(key, str) and _VIDEO_INPUT_PATTERN.fullmatch(key):
+            return True
+        return super().__contains__(key)
+
+    def __getitem__(self, key: str) -> Any:
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        if isinstance(key, str) and _VIDEO_INPUT_PATTERN.fullmatch(key):
+            return ("VIDEO",)
+        raise KeyError(key)
 
 
 def set_context(context: BridgeContext) -> None:
@@ -81,6 +134,28 @@ def _materialize_video(video_dir: Path, index: int, video: Any) -> Path:
     return dest
 
 
+def _video_kwargs(kwargs: dict[str, Any]) -> list[tuple[int, Any]]:
+    """``(index, video)`` for every present, non-``None`` ``video_N`` kwarg.
+
+    Sorted by ``N`` ascending (PROTOCOL.md §3.1), independent of *kwargs*'
+    own iteration order. Replaces the old ``range(1, MAX_VIDEO_INPUTS + 1)``
+    walk now that ``N`` is unbounded (§3.1's "grow like image nodes"): an
+    unconnected slot is simply a key that's absent or ``None`` from *kwargs*
+    (ComfyUI omits unconnected optional sockets on some call paths and passes
+    ``None`` on others; both mean "not connected", matching the old fixed-
+    range behavior's own ``if video is None: continue``).
+    """
+    indexed: list[tuple[int, Any]] = []
+    for key, value in kwargs.items():
+        if value is None:
+            continue
+        match = _VIDEO_INPUT_PATTERN.fullmatch(key)
+        if match:
+            indexed.append((int(key[len("video_") :]), value))
+    indexed.sort(key=lambda pair: pair[0])
+    return indexed
+
+
 def _clip_from_probe(name: str, path: str, info: Any) -> timeline_write.ClipSpec:
     return timeline_write.ClipSpec(
         name=name,
@@ -109,17 +184,37 @@ def _iter_path_lines(paths: str) -> list[tuple[int, str]]:
     return result
 
 
+def _collect_media_path(media_dir: Path, number: int, source: Path) -> Path:
+    """Destination for a COLLECTED ``paths`` entry (§3.2 ``media`` = Collect).
+
+    Named like :func:`_materialize_video`'s own convention -- zero-padded
+    ``NNN_<sanitized stem>`` -- but keeps *source*'s own extension (§3.3:
+    "preserve extension") since collecting is a byte copy
+    (:func:`shutil.copy2`, in :meth:`PremiereSaveTimeline.execute`), never a
+    re-encode. ``number`` is the ``paths`` widget's own 1-based line number
+    (the same number a probe failure on this line would cite as "paths line
+    N"), so a collected file's name is traceable back to the widget line
+    that produced it.
+    """
+    media_dir.mkdir(parents=True, exist_ok=True)
+    return media_dir / f"{number:03d}_{sanitize_name(source.stem)}{source.suffix}"
+
+
 class PremiereSaveTimeline:
     """Writes a Premiere-importable timeline from ComfyUI media (PROTOCOL.md §3).
 
-    Inputs are ``video_1..video_4`` (all optional VIDEO sockets) and a
-    ``paths`` multiline STRING widget (one absolute path per line); the
-    final clip order is ``video_1..4`` first, then ``paths`` lines top to
-    bottom (§3.1), laid back-to-back from ``00:00:00:00`` on video track 1.
-    VIDEO inputs are materialized into ``media/`` via their own ``save_to``
-    (§3.3); ``paths`` entries are referenced in place, never copied. Every
-    clip is then probed (:mod:`cprb.probe`) for its real frame
-    count/fps/resolution, and the assembled
+    Inputs are an UNBOUNDED number of ``video_N`` (all optional VIDEO
+    sockets, §3.1 -- ``video_1`` is the only one INPUT_TYPES declares by
+    name; any other ``video_N`` is accepted via
+    :class:`_FlexibleOptionalVideoInputs`) and a ``paths`` multiline STRING
+    widget (one absolute path per line); the final clip order is ``video_N``
+    ascending first, then ``paths`` lines top to bottom (§3.1), laid back-
+    to-back from ``00:00:00:00`` on video track 1. VIDEO inputs are ALWAYS
+    materialized into ``media/`` via their own ``save_to`` (§3.3); ``paths``
+    entries are either referenced in place or copied into ``media/``, per
+    the ``media`` widget (§3.2: ``"Link in place"`` vs ``"Collect into
+    folder"``). Every clip is then probed (:mod:`cprb.probe`) for its real
+    frame count/fps/resolution, and the assembled
     :class:`~cprb.timeline_write.ClipSpec` list is handed to
     :mod:`cprb.timeline_write` to write ``<sequence_name>.xml`` (always;
     PROTOCOL.md §4), plus ``.edl``/``.otio`` when ``write_edl``/
@@ -127,9 +222,10 @@ class PremiereSaveTimeline:
 
     ``OUTPUT_NODE = True``: this node exists for its filesystem side effects.
     Returns ``timeline_path`` (the written ``.xml``'s absolute path) and a UI
-    text summary listing every file written plus any warnings (currently
-    only "otio skipped (not installed)", when ``write_otio`` is set but
-    ``opentimelineio`` isn't).
+    text summary listing every file written, how many ``paths`` entries were
+    linked vs collected, plus any warnings (currently only "otio skipped
+    (not installed)", when ``write_otio`` is set but ``opentimelineio``
+    isn't).
 
     Raises (never silently drops a clip or a file):
 
@@ -140,15 +236,17 @@ class PremiereSaveTimeline:
     * ``TypeError`` -- a connected ``video_N`` has no ``save_to`` (not a
       real VIDEO object).
     * ``ValueError`` -- no clips at all (nothing connected AND ``paths`` is
-      empty/all-comments) -- there is nothing to write a timeline from.
+      empty/all-comments), or ``media`` isn't one of :data:`MEDIA_CHOICES`.
 
     Re-running with the same ``sequence_name`` overwrites this timeline's
     files in place (PROTOCOL.md §2): every path this node writes to is a
     deterministic function of ``sequence_name`` and each clip's own
-    position/socket index, never a freshly-allocated "next free slot", so a
-    second run with identical inputs reproduces byte-identical files and a
-    second run with DIFFERENT inputs simply overwrites them with the new
-    content -- exactly the re-import-painless behavior §2 calls for.
+    position/socket index (a COLLECTED ``paths`` entry's filename comes from
+    its widget LINE number instead -- same "deterministic per input"
+    principle), never a freshly-allocated "next free slot", so a second run
+    with identical inputs reproduces byte-identical files and a second run
+    with DIFFERENT inputs simply overwrites them with the new content --
+    exactly the re-import-painless behavior §2 calls for.
     """
 
     CATEGORY = "Premiere Bridge"
@@ -159,11 +257,12 @@ class PremiereSaveTimeline:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
-        optional = {f"video_{i}": ("VIDEO",) for i in range(1, MAX_VIDEO_INPUTS + 1)}
+        optional = _FlexibleOptionalVideoInputs({"video_1": ("VIDEO",)})
         return {
             "required": {
                 "sequence_name": ("STRING", {"default": DEFAULT_SEQUENCE_NAME}),
                 "fps": (FPS_CHOICES, {"default": DEFAULT_FPS}),
+                "media": (MEDIA_CHOICES, {"default": DEFAULT_MEDIA}),
                 "paths": ("STRING", {"default": "", "multiline": True, "forceInput": False}),
                 "write_edl": ("BOOLEAN", {"default": False}),
                 "write_otio": ("BOOLEAN", {"default": False}),
@@ -178,11 +277,16 @@ class PremiereSaveTimeline:
         paths: str,
         write_edl: bool,
         write_otio: bool,
+        media: str = DEFAULT_MEDIA,
         **kwargs: Any,
     ) -> dict[str, Any]:
         if _context is None:
             raise RuntimeError(
                 "PremiereSaveTimeline: no BridgeContext configured (set_context was never called)"
+            )
+        if media not in MEDIA_CHOICES:
+            raise ValueError(
+                f"PremiereSaveTimeline: unknown media {media!r} (expected one of {MEDIA_CHOICES})"
             )
         # Lazy: keeps this module importable (e.g. for FPS_CHOICES) without PyAV.
         from .probe import ProbeError, probe_media
@@ -194,10 +298,7 @@ class PremiereSaveTimeline:
         written: list[str] = []
         warnings: list[str] = []
 
-        for index in range(1, MAX_VIDEO_INPUTS + 1):
-            video = kwargs.get(f"video_{index}")
-            if video is None:
-                continue
+        for index, video in _video_kwargs(kwargs):
             dest = _materialize_video(media_dir, index, video)
             written.append(str(dest))
             try:
@@ -206,12 +307,27 @@ class PremiereSaveTimeline:
                 raise ProbeError(f"video_{index}: {exc}") from exc
             clips.append(_clip_from_probe(dest.stem, str(dest), info))
 
-        for line_no, path in _iter_path_lines(paths):
+        # §3.2: paths entries are probed at their ORIGINAL location either
+        # way -- Collect copies the already-probed bytes, it never re-probes
+        # the copy.
+        linked_count = 0
+        collected_count = 0
+        path_lines = _iter_path_lines(paths)
+        for line_no, path in path_lines:
             try:
                 info = probe_media(path)
             except ProbeError as exc:
                 raise ProbeError(f"paths line {line_no}: {exc}") from exc
-            clips.append(_clip_from_probe(Path(path).stem, path, info))
+
+            if media == MEDIA_COLLECT:
+                dest = _collect_media_path(media_dir, line_no, Path(path))
+                shutil.copy2(path, dest)
+                written.append(str(dest))
+                collected_count += 1
+                clips.append(_clip_from_probe(dest.stem, str(dest), info))
+            else:
+                linked_count += 1
+                clips.append(_clip_from_probe(Path(path).stem, path, info))
 
         if not clips:
             raise ValueError(
@@ -245,6 +361,11 @@ class PremiereSaveTimeline:
 
         summary = [f"Wrote {len(written)} file(s):"]
         summary.extend(f"  {path}" for path in written)
+        if path_lines:
+            summary.append(
+                f"Media: {linked_count} file(s) linked in place, "
+                f"{collected_count} file(s) collected into media/"
+            )
         if warnings:
             summary.append("Warnings:")
             summary.extend(f"  {warning}" for warning in warnings)

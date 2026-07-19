@@ -293,3 +293,190 @@ def test_execute_happy_path_writes_expected_files_with_edl(
     xml_text = xml_path.read_text()
     assert "<name>001_video_1</name>" in xml_text
     assert "<name>extra</name>" in xml_text
+
+
+# --- §3.2 media widget: Link in place vs Collect into folder ------------------
+
+
+def test_execute_media_link_references_original_path_without_copying(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    clip = _write_path_line(tmp_path, "clipA.mov")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="Link Mode", fps="24", paths=str(clip),
+        write_edl=True, write_otio=False, media="Link in place",
+    )
+
+    out_dir = context.output_dir / "premiere_timelines" / "Link Mode"
+    # Zero-copy: nothing was ever written into media/ for a linked paths entry.
+    assert not (out_dir / "media").exists()
+
+    xml_text = (out_dir / "Link Mode.xml").read_text()
+    edl_text = (out_dir / "Link Mode.edl").read_text()
+    assert "<name>clipA</name>" in xml_text
+    assert f"* SOURCE FILE: {clip}" in edl_text
+
+    summary = "\n".join(result["ui"]["text"])
+    assert "1 file(s) linked in place" in summary
+    assert "0 file(s) collected into media/" in summary
+
+
+def test_execute_media_is_link_by_default(context: BridgeContext, tmp_path: Path) -> None:
+    """Omitting ``media`` entirely (as every pre-existing call site does) must
+    reproduce the original zero-copy Link behavior."""
+    clip = _write_path_line(tmp_path, "default.mov")
+    node = PremiereSaveTimeline()
+
+    node.execute(
+        sequence_name="Default Media", fps="24", paths=str(clip), write_edl=False, write_otio=False
+    )
+
+    out_dir = context.output_dir / "premiere_timelines" / "Default Media"
+    assert not (out_dir / "media").exists()
+
+
+def test_execute_media_collect_copies_into_media_and_references_the_copy(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    clip = _write_path_line(tmp_path, "clipB.mov", content=b"original-bytes")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="Collect Mode", fps="24", paths=f"{clip}\n",
+        write_edl=True, write_otio=False, media="Collect into folder",
+    )
+
+    out_dir = context.output_dir / "premiere_timelines" / "Collect Mode"
+    copied = out_dir / "media" / "001_clipB.mov"
+    assert copied.exists()
+    assert copied.read_bytes() == b"original-bytes"
+
+    xml_text = (out_dir / "Collect Mode.xml").read_text()
+    edl_text = (out_dir / "Collect Mode.edl").read_text()
+    assert "<name>001_clipB</name>" in xml_text
+    assert f"* SOURCE FILE: {copied}" in edl_text
+    assert str(clip) not in edl_text  # the ORIGINAL path must not leak into output
+
+    summary = "\n".join(result["ui"]["text"])
+    assert "0 file(s) linked in place" in summary
+    assert "1 file(s) collected into media/" in summary
+    assert str(copied) in summary
+
+
+def test_execute_media_collect_numbers_multiple_paths_by_line_number(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    clip_a = _write_path_line(tmp_path, "first.mov")
+    clip_b = _write_path_line(tmp_path, "second.mov")
+    node = PremiereSaveTimeline()
+
+    node.execute(
+        sequence_name="Collect Multi", fps="24", paths=f"{clip_a}\n{clip_b}\n",
+        write_edl=False, write_otio=False, media="Collect into folder",
+    )
+
+    media_dir = context.output_dir / "premiere_timelines" / "Collect Multi" / "media"
+    assert (media_dir / "001_first.mov").exists()
+    assert (media_dir / "002_second.mov").exists()
+
+
+def test_execute_media_collect_uses_raw_line_number_even_with_blank_lines(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    clip = _write_path_line(tmp_path, "third.mov")
+    node = PremiereSaveTimeline()
+
+    node.execute(
+        sequence_name="Collect Gaps", fps="24", paths=f"\n# comment\n{clip}\n",
+        write_edl=False, write_otio=False, media="Collect into folder",
+    )
+
+    media_dir = context.output_dir / "premiere_timelines" / "Collect Gaps" / "media"
+    assert (media_dir / "003_third.mov").exists()  # line 3, matching "paths line 3" errors
+
+
+def test_execute_video_input_materializes_under_media_link(context: BridgeContext) -> None:
+    video_1 = FakeVideo()
+    node = PremiereSaveTimeline()
+
+    node.execute(
+        sequence_name="Video Link", fps="24", paths="",
+        write_edl=False, write_otio=False, media="Link in place", video_1=video_1,
+    )
+
+    media_path = (
+        context.output_dir / "premiere_timelines" / "Video Link" / "media" / "001_video_1.mp4"
+    )
+    assert media_path.exists()
+    assert video_1.save_to_calls == [str(media_path)]
+
+
+def test_execute_video_input_materializes_under_media_collect(context: BridgeContext) -> None:
+    video_1 = FakeVideo()
+    node = PremiereSaveTimeline()
+
+    node.execute(
+        sequence_name="Video Collect", fps="24", paths="",
+        write_edl=False, write_otio=False, media="Collect into folder", video_1=video_1,
+    )
+
+    media_path = (
+        context.output_dir / "premiere_timelines" / "Video Collect" / "media" / "001_video_1.mp4"
+    )
+    assert media_path.exists()
+    assert video_1.save_to_calls == [str(media_path)]
+
+
+def test_execute_raises_on_unknown_media_value(tmp_path: Path) -> None:
+    clip = _write_path_line(tmp_path, "clip.mov")
+    node = PremiereSaveTimeline()
+    with pytest.raises(ValueError, match="unknown media"):
+        node.execute(
+            sequence_name="Bad Media", fps="24", paths=str(clip),
+            write_edl=False, write_otio=False, media="Nonsense Mode",
+        )
+
+
+# --- §3.1 unbounded video_N ----------------------------------------------------
+
+
+def test_execute_accepts_unbounded_video_n_in_ascending_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``video_1``, ``video_2``, ``video_5`` (skipping 3/4 entirely) must all
+    be collected, in ascending numeric order -- not just the old ``1..4``."""
+    captured: dict[str, list[timeline_write.ClipSpec]] = {}
+
+    def fake_build_xmeml(_sequence_name: str, _fps_key: str, clips: list) -> str:
+        captured["clips"] = list(clips)
+        return "<xmeml/>"
+
+    monkeypatch.setattr(timeline_write, "build_xmeml", fake_build_xmeml)
+
+    video_1, video_2, video_5 = FakeVideo(), FakeVideo(), FakeVideo()
+    node = PremiereSaveTimeline()
+
+    node.execute(
+        sequence_name="Unbounded", fps="24", paths="", write_edl=False, write_otio=False,
+        video_1=video_1, video_2=video_2, video_5=video_5,
+    )
+
+    names = [clip.name for clip in captured["clips"]]
+    assert names == ["001_video_1", "002_video_2", "005_video_5"]
+
+
+def test_input_types_optional_accepts_arbitrary_video_n_key() -> None:
+    """The flexible-optional-inputs dict: only ``video_1`` is actually stored
+    (one visible socket by default), but ``in`` must say yes to ANY
+    ``video_N`` -- e.g. ``video_5`` -- so ComfyUI's input validation accepts
+    a workflow that wires an unbounded socket the frontend later grows."""
+    optional = PremiereSaveTimeline.INPUT_TYPES()["optional"]
+
+    assert list(optional.keys()) == ["video_1"]
+    assert "video_1" in optional
+    assert "video_5" in optional
+    assert "video_37" in optional
+    assert optional["video_37"] == ("VIDEO",)
+    assert "not_a_video_input" not in optional
