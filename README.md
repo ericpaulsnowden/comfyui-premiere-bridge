@@ -45,11 +45,15 @@ writes everything under
 
 Output is deterministic (re-running the same name overwrites in place) and
 the node returns the `.xml` path as a STRING plus a written-files summary.
+**Open output folder** on the node jumps straight to that folder in
+Explorer/Finder — the next step is importing it into Premiere.
 
 ## Load Premiere Timeline + Get Shot (shipped)
 
 Export your edit from Premiere (`File > Export > Final Cut Pro XML`), point
-**Load Premiere Timeline** at the `.xml`, and you get:
+**Load Premiere Timeline** at the `.xml` — click **Browse…** to pick it
+from a folder browser instead of pasting a path (**Open folder** reveals it
+on disk) — and you get:
 
 - `shots` — the edit as a shot list (every video clip's source path, in/out
   points, rate, enabled state), in timeline order across all video tracks.

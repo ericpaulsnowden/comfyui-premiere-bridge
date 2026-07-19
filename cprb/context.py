@@ -45,8 +45,18 @@ class BridgeContext:
     output_dir: Path
     input_dir: Path
 
+    def resolve_timeline_dir(self, sequence_name: str) -> Path:
+        """``<output>/premiere_timelines/<sanitized name>/`` — computed, NOT
+        created.
+
+        Split out from :meth:`timeline_dir` because PROTOCOL.md §7.2's
+        ``timeline_dir`` route reports whether that folder ``exists`` yet:
+        asking the question must not answer it by creating the folder.
+        """
+        return self.output_dir / TIMELINES_DIRNAME / sanitize_name(sequence_name)
+
     def timeline_dir(self, sequence_name: str) -> Path:
         """``<output>/premiere_timelines/<sanitized name>/``, created."""
-        directory = self.output_dir / TIMELINES_DIRNAME / sanitize_name(sequence_name)
+        directory = self.resolve_timeline_dir(sequence_name)
         directory.mkdir(parents=True, exist_ok=True)
         return directory

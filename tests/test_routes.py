@@ -1,0 +1,225 @@
+"""HTTP routes (PROTOCOL.md §7): config, the picker feed, reveal, timeline_dir.
+
+Every filesystem-touching route is host-machine-only (§7.1); a forwarded
+request stands in for "a browser on another machine" throughout. The reveal
+helper is monkeypatched everywhere — tests must never spawn real Finder or
+Explorer windows.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+from aiohttp import web
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from cprb import routes as cprb_routes
+from cprb.context import BridgeContext
+from cprb.routes import build_routes
+from cprb.version import __version__
+
+REMOTE_HEADERS = {"X-Forwarded-For": "192.168.1.50"}
+
+
+@pytest.fixture
+async def client(context: BridgeContext, aiohttp_client):
+    app = web.Application()
+    app.add_routes(build_routes(context))
+    return await aiohttp_client(app)
+
+
+# ------------------------------------------------------------------ version
+
+
+async def test_version_matches_the_package(client) -> None:
+    data = await (await client.get("/cprb/version")).json()
+    assert data["version"] == __version__
+
+
+# ------------------------------------------------------------------- config
+
+
+async def test_config_reports_is_local_true_for_loopback(
+    client, context: BridgeContext
+) -> None:
+    data = await (await client.get("/cprb/config")).json()
+    assert data["is_local"] is True
+    assert data["output_dir"] == str(context.output_dir)
+    assert data["input_dir"] == str(context.input_dir)
+
+
+async def test_config_reports_is_local_false_for_forwarded_caller(client) -> None:
+    data = await (await client.get("/cprb/config", headers=REMOTE_HEADERS)).json()
+    assert data["is_local"] is False
+
+
+# ------------------------------------------------------------------ fs/list
+
+
+async def test_fs_list_defaults_to_output_dir_and_filters_xml(
+    client, context: BridgeContext
+) -> None:
+    (context.output_dir / "edit.xml").write_text("<xmeml/>", encoding="utf-8")
+    (context.output_dir / "notes.txt").write_text("x", encoding="utf-8")
+    (context.output_dir / "premiere_timelines").mkdir()
+    data = await (await client.get("/cprb/fs/list")).json()
+    assert data["dir"] == str(context.output_dir)
+    assert data["dirs"] == ["premiere_timelines"]
+    assert data["files"] == ["edit.xml"]
+    assert data["parent"] == str(context.output_dir.parent)
+
+
+async def test_fs_list_matches_extensions_case_insensitively(
+    client, context: BridgeContext
+) -> None:
+    (context.output_dir / "SHOUTY.XML").write_text("<xmeml/>", encoding="utf-8")
+    data = await (await client.get("/cprb/fs/list")).json()
+    assert data["files"] == ["SHOUTY.XML"]
+
+
+async def test_fs_list_honors_an_explicit_ext_allowlist(
+    client, context: BridgeContext
+) -> None:
+    (context.output_dir / "a.xml").write_text("<xmeml/>", encoding="utf-8")
+    (context.output_dir / "b.edl").write_text("TITLE: x", encoding="utf-8")
+    (context.output_dir / "c.otio").write_text("{}", encoding="utf-8")
+    data = await (await client.get("/cprb/fs/list", params={"ext": "edl,.otio"})).json()
+    assert data["files"] == ["b.edl", "c.otio"]
+
+
+async def test_fs_list_blank_ext_falls_back_to_the_default_allowlist(
+    client, context: BridgeContext
+) -> None:
+    # A stray `ext=` must not turn the timeline picker into a general
+    # file browser (see _parse_extensions).
+    (context.output_dir / "a.xml").write_text("<xmeml/>", encoding="utf-8")
+    (context.output_dir / "b.txt").write_text("x", encoding="utf-8")
+    data = await (await client.get("/cprb/fs/list", params={"ext": " , "})).json()
+    assert data["files"] == ["a.xml"]
+
+
+async def test_fs_list_navigates_an_explicit_absolute_dir(client, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "exports"
+    elsewhere.mkdir()
+    (elsewhere / "cut.xml").write_text("<xmeml/>", encoding="utf-8")
+    data = await (
+        await client.get("/cprb/fs/list", params={"dir": str(elsewhere)})
+    ).json()
+    assert data["files"] == ["cut.xml"]
+
+
+async def test_fs_list_is_loopback_only(client) -> None:
+    response = await client.get("/cprb/fs/list", headers=REMOTE_HEADERS)
+    assert response.status == 403
+
+
+async def test_fs_list_rejects_a_relative_dir(client) -> None:
+    response = await client.get("/cprb/fs/list", params={"dir": "not/absolute"})
+    assert response.status == 400
+
+
+async def test_fs_list_unreadable_dir_is_400(client, tmp_path: Path) -> None:
+    response = await client.get(
+        "/cprb/fs/list", params={"dir": str(tmp_path / "nope" / "missing")}
+    )
+    assert response.status == 400
+
+
+# -------------------------------------------------------------- open_folder
+
+
+async def test_open_folder_reveals_a_files_parent(
+    client, context: BridgeContext, monkeypatch
+) -> None:
+    revealed = []
+    monkeypatch.setattr(cprb_routes, "_reveal_folder", revealed.append)
+    target = context.output_dir / "edit.xml"
+    target.write_text("<xmeml/>", encoding="utf-8")
+    response = await client.post("/cprb/open_folder", json={"path": str(target)})
+    assert response.status == 200
+    assert await response.json() == {"ok": True}
+    assert revealed == [context.output_dir]
+
+
+async def test_open_folder_reveals_a_directory_itself(
+    client, context: BridgeContext, monkeypatch
+) -> None:
+    revealed = []
+    monkeypatch.setattr(cprb_routes, "_reveal_folder", revealed.append)
+    response = await client.post("/cprb/open_folder", json={"path": str(context.output_dir)})
+    assert response.status == 200
+    assert revealed == [context.output_dir]
+
+
+async def test_open_folder_is_loopback_only(client, context: BridgeContext, monkeypatch) -> None:
+    revealed = []
+    monkeypatch.setattr(cprb_routes, "_reveal_folder", revealed.append)
+    response = await client.post(
+        "/cprb/open_folder", json={"path": str(context.output_dir)}, headers=REMOTE_HEADERS
+    )
+    assert response.status == 403
+    assert revealed == []
+
+
+async def test_open_folder_requires_a_path(client) -> None:
+    response = await client.post("/cprb/open_folder", json={})
+    assert response.status == 400
+
+
+async def test_open_folder_missing_folder_is_404(client, tmp_path: Path) -> None:
+    response = await client.post(
+        "/cprb/open_folder", json={"path": str(tmp_path / "gone" / "edit.xml")}
+    )
+    assert response.status == 404
+
+
+async def test_open_folder_spawn_failure_is_500_with_the_reason(
+    client, context: BridgeContext, monkeypatch
+) -> None:
+    def boom(_path: Path) -> None:
+        raise RuntimeError("no file manager here")
+
+    monkeypatch.setattr(cprb_routes, "_reveal_folder", boom)
+    response = await client.post("/cprb/open_folder", json={"path": str(context.output_dir)})
+    assert response.status == 500
+    assert "no file manager here" in (await response.json())["error"]
+
+
+# ------------------------------------------------------------ timeline_dir
+
+
+async def test_timeline_dir_resolves_without_creating_the_folder(
+    client, context: BridgeContext
+) -> None:
+    data = await (
+        await client.get("/cprb/timeline_dir", params={"sequence_name": "My Edit"})
+    ).json()
+    expected = context.output_dir / "premiere_timelines" / "My Edit"
+    assert data["dir"] == str(expected)
+    assert data["exists"] is False
+    # Asking the question must not answer it (PROTOCOL.md §7.2).
+    assert not expected.exists()
+
+
+async def test_timeline_dir_reports_exists_once_written(
+    client, context: BridgeContext
+) -> None:
+    context.timeline_dir("My Edit")
+    data = await (
+        await client.get("/cprb/timeline_dir", params={"sequence_name": "My Edit"})
+    ).json()
+    assert data["exists"] is True
+
+
+async def test_timeline_dir_sanitizes_like_the_writer(
+    client, context: BridgeContext
+) -> None:
+    # The frontend never re-implements sanitize_name; it asks (§7.2).
+    data = await (
+        await client.get("/cprb/timeline_dir", params={"sequence_name": 'Bad:Name?/x'})
+    ).json()
+    assert data["dir"] == str(context.resolve_timeline_dir("Bad:Name?/x"))
+    assert ":" not in Path(data["dir"]).name

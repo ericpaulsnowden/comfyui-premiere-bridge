@@ -238,11 +238,46 @@ wire into cprb consumers; contents are documented here and FROZEN.
 
 ## §7 Routes & frontend
 
-- `GET /cprb/version` → `{"version": "X.Y.Z"}` — the only route in Tier 1.
-- `web/cprb.js`: one `app.registerExtension('cprb.PremiereBridge')` with an
-  About-panel badge and a "Premiere Bridge" settings section showing
-  backend+frontend versions (mismatch = pulled-but-not-restarted; cpsb
-  pattern). No other frontend behavior in Tier 1.
+Routes register on `PromptServer.instance.routes` (never the app directly)
+so ComfyUI's `/api` prefix mirror serves them — the frontend's `fetchApi`
+always calls `/api/cprb/...`.
+
+**§7.1 Host-machine posture.** The picker and reveal routes below act on
+the SERVER's filesystem, so they are **loopback-only**: a request whose
+`request.remote` isn't a loopback address (or that carries an
+`X-Forwarded-For` header — a proxy hop hides the real origin) gets
+`403 {"error": ...}`. A remote browser (the Mac viewing the PC's ComfyUI)
+therefore hides those buttons and types paths by hand; nothing else about
+the nodes changes. Same rule and rationale as EPSNodes' FORMAT.md §2.
+
+**§7.2 Routes.** JSON in/out; errors are `{"error": "<human message>"}`.
+
+| Route | → |
+|---|---|
+| `GET /cprb/version` | `{"version": "X.Y.Z"}` |
+| `GET /cprb/config` | `{"is_local": bool, "output_dir": <abs>, "input_dir": <abs>}` — `is_local` is the §7.1 verdict for THIS caller (gates the buttons); the dirs seed the picker's starting location |
+| `GET /cprb/fs/list?dir=&ext=` | **loopback-only.** Server-filesystem browser. Empty/missing `dir` ⇒ `output_dir`. `ext` = a comma-separated extension allowlist (default `.xml`; always case-insensitive). → `{"dir": <abs>, "parent": <abs or null>, "dirs": [names], "files": [names]}`, entries sorted case-insensitively; non-absolute `dir` ⇒ 400; unreadable ⇒ 400 |
+| `POST /cprb/open_folder` `{"path"}` | **loopback-only.** Reveals *path* in the OS file manager ON THE SERVER MACHINE (Explorer/Finder): a file reveals its parent folder, a directory reveals itself. Missing ⇒ 404; spawn failure ⇒ 500; `{"ok": true}` |
+| `GET /cprb/timeline_dir?sequence_name=` | `{"dir": <abs>, "exists": bool}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name` |
+
+**§7.3 Frontend.** `web/cprb.js`: one
+`app.registerExtension('cprb.PremiereBridge')` with the About-panel badge
+and the "Premiere Bridge" settings section showing backend+frontend
+versions (mismatch = pulled-but-not-restarted; cpsb pattern), plus:
+
+- **Load Premiere Timeline** gains a file bar under its widgets: `Browse…`
+  opens a picker dialog over §7.2 `fs/list` (navigate folders, `..` row,
+  `.xml` files only; picking one writes the `file_path` widget through its
+  real setter) and `Open folder` reveals the selected file's folder. Both
+  buttons are HIDDEN when `config.is_local` is false (§7.1).
+- **Save Premiere Timeline** gains one `Open output folder` button that
+  resolves its `sequence_name` through §7.2 `timeline_dir` and reveals
+  that folder — the natural next step after a run (go import it into
+  Premiere). Before the first run the folder may not exist yet: the button
+  says so rather than erroring. Hidden when not local, same as above.
+- Node class ids and widget names are untouched by all of this: the
+  buttons are frontend affordances over the SAME `file_path` /
+  `sequence_name` widgets, so API-driven and remote use are unaffected.
 
 ## §8 Versioning & stability
 
