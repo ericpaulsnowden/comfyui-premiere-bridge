@@ -253,8 +253,9 @@ def build_xmeml(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]) -> 
     Args:
         sequence_name: Both the ``<sequence><name>`` text and the uuid5 seed.
         fps_key: One of :data:`RATE_TABLE`'s 8 keys -- the SEQUENCE rate.
-        clips: In final timeline order (§3.1: ``video_1..4`` then ``paths``
-            lines, top to bottom); must be non-empty.
+        clips: In final timeline order (§3.1: connected ``video_N`` in
+            ascending N, then ``paths`` lines top to bottom); must be
+            non-empty.
 
     Returns:
         The complete ``.xml`` file content (with trailing newline).
