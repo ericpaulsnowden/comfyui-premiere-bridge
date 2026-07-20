@@ -47,8 +47,13 @@ drop-frame aware), and the node writes everything under
 
 Output is deterministic (re-running the same name overwrites in place) and
 the node returns the `.xml` path as a STRING plus a written-files summary.
-**Open output folder** on the node jumps straight to that folder in
-Explorer/Finder — the next step is importing it into Premiere.
+By default it writes under ComfyUI's output folder, but the optional
+`output_dir` widget can redirect it anywhere — **Browse…** picks a folder
+(the timeline still gets its own `<sequence_name>` subfolder inside it), so
+timelines can land on a project or NAS folder. **Open folder** on the node
+jumps straight to the effective folder in Explorer/Finder — the next step is
+importing it into Premiere. (A non-absolute `output_dir` is ignored with a
+note, never an error, and falls back to the default.)
 
 ## Load Premiere Timeline + Get Shot (shipped)
 

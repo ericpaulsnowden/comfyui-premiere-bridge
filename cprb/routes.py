@@ -392,8 +392,20 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
 
     @routes.get("/cprb/timeline_dir")
     async def get_timeline_dir(request: web.Request) -> web.Response:
+        """PROTOCOL.md §7.2/§3.2: ``output_dir``-aware. Passing the SAME
+        (possibly empty) ``output_dir`` the node itself will run with makes
+        this resolve the IDENTICAL effective folder
+        ``PremiereSaveTimeline.execute`` writes to -- an omitted/blank
+        ``output_dir`` behaves exactly as before this param existed. Never
+        400s on a non-absolute ``output_dir``: `resolve_timeline_dir` falls
+        back to the default base on its own (the same clean-rejection rule
+        the node itself warns about; this route has no UI summary to put a
+        warning in, so it just quietly resolves what the node WOULD
+        actually do).
+        """
         sequence_name = request.query.get("sequence_name", "")
-        directory = context.resolve_timeline_dir(sequence_name)
+        output_dir = request.query.get("output_dir", "")
+        directory = context.resolve_timeline_dir(sequence_name, output_dir)
         return web.json_response({"dir": str(directory), "exists": directory.is_dir()})
 
 

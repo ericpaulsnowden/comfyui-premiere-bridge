@@ -30,7 +30,8 @@ Adobe-side plugin is a better version, never the only version):
 ## §2 Output conventions
 
 Everything Save Premiere Timeline writes lands under ComfyUI's normal
-output tree:
+output tree BY DEFAULT (§3.2's `output_dir` widget can redirect the base to
+a folder of the user's choosing; see that section):
 
 ```
 <comfy output>/premiere_timelines/<sanitized sequence_name>/
@@ -90,6 +91,20 @@ output tree:
 - `write_otio` (BOOLEAN, default False; missing `opentimelineio` ⇒ warning
   in the node result, not a failure — soft dependency; see the OTIO note
   in §5).
+- `output_dir` (optional STRING, default `""`, owner ask 2026-07-20): empty
+  keeps the §2 default base (`<comfy output>/premiere_timelines/`); a
+  non-empty, ABSOLUTE value replaces that base directly — the timeline
+  still gets its own `<sanitized sequence_name>/` subfolder either way
+  (never straight into `output_dir`'s own root), so this becomes
+  `<output_dir>/<sanitized sequence_name>/` with no `premiere_timelines`
+  middle folder — letting a timeline land on a project or NAS folder of the
+  user's choosing. A non-empty value that ISN'T absolute is rejected
+  cleanly (a warning in the server log and the node's own UI summary text;
+  the default base is used instead — never a hard failure over a
+  hand-typed path mistake). §7.3's Browse… (directory-choose mode) writes
+  here; §7.2's `GET /cprb/timeline_dir` accepts the same param so "Open
+  folder" always resolves the identical effective path this widget would
+  actually write to.
 
 ### §3.3 Behavior
 
@@ -315,7 +330,7 @@ the nodes changes. Same rule and rationale as EPSNodes' FORMAT.md §2.
 | `GET /cprb/config` | `{"is_local": bool, "output_dir": <abs>, "input_dir": <abs>}` — `is_local` is the §7.1 verdict for THIS caller (gates the buttons); the dirs seed the picker's starting location |
 | `GET /cprb/fs/list?dir=&ext=` | **loopback-only** (`FS_LIST_LOCAL_ONLY=True`). Conforms to the cross-pack **`../../STANDARD-fs-browse.md`** contract (shared with cpsb + epsnodes; v0.5.1). Empty/missing `dir` ⇒ `output_dir`. `dir="ROOTS"` ⇒ the labeled top level: **"ComfyUI Output"** + **"Home"** + platform tail (Windows drives `C:\`/`D:\`/`U:\`…, or macOS `/Volumes/*`). `ext` = a comma-separated allowlist (default `.xml`; case-insensitive). → `{"dir", "parent" (abs / "ROOTS" / null), "sep", "dirs":[{name}], "files":[{name,size,mtime}], "truncated"}` — **names-only** entries (client joins with `dir`+`sep`; ROOTS entries also carry an absolute `path`), case-insensitively sorted, dotfiles + stat-failures skipped, 500-entry cap ⇒ `truncated:true`. A directory at a drive root reports `parent:"ROOTS"` so the picker can climb to the top level (the 2026-07-19 "stuck at top of C:\" fix); a UNC path lists normally, its share root `parent:null`; non-absolute `dir` (other than `ROOTS`) ⇒ 400; unreadable ⇒ 400 |
 | `POST /cprb/open_folder` `{"path"}` | **loopback-only.** Reveals *path* in the OS file manager ON THE SERVER MACHINE (Explorer/Finder): a file reveals its parent folder, a directory reveals itself. Missing ⇒ 404; spawn failure ⇒ 500; `{"ok": true}` |
-| `GET /cprb/timeline_dir?sequence_name=` | `{"dir": <abs>, "exists": bool}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name` |
+| `GET /cprb/timeline_dir?sequence_name=&output_dir=` | `{"dir": <abs>, "exists": bool}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name`. `output_dir` (2026-07-20, §3.2) is optional and mirrors the node's own widget of the same name — passing it resolves the SAME effective folder `PremiereSaveTimeline` would write to with that override; omitted/blank behaves exactly as before it existed. Never 400s on a non-absolute `output_dir` — it is silently treated as blank (the node is the one that surfaces the "rejected" warning; this route only ever mirrors what the node would actually do) |
 
 **§7.3 Frontend.** `web/cprb.js`: one
 `app.registerExtension('cprb.PremiereBridge')` with the About-panel badge
@@ -327,16 +342,30 @@ versions (mismatch = pulled-but-not-restarted; cpsb pattern), plus:
   `.xml` files only; picking one writes the `file_path` widget through its
   real setter) and `Open folder` reveals the selected file's folder. Both
   buttons are HIDDEN when `config.is_local` is false (§7.1).
-- **Save Premiere Timeline** gains one `Open output folder` button that
-  resolves its `sequence_name` through §7.2 `timeline_dir` and reveals
-  that folder — the natural next step after a run (go import it into
-  Premiere). Before the first run the folder may not exist yet: the button
-  says so rather than erroring. Hidden when not local, same as above.
-  Save deliberately has NO `Browse…` (it WRITES to a deterministic
-  `output/premiere_timelines/<sequence_name>/` — there is no input file to
-  pick) and its reveal button reads "Open output folder", not "Open
-  folder". This asymmetry with Load is intentional (owner asked 2026-07-19
-  why they differ) — not a bug.
+- **Save Premiere Timeline** gains a file bar matching Load's (owner ask
+  2026-07-20: "Save … does not have the same Browse…/Open folder as the
+  Load node does" — the prior intentional asymmetry is REVERSED; give it
+  parity). Two buttons, same styling/placement as Load:
+  - `Browse…` opens the §7.2 `fs/list` picker in **directory-choose mode**
+    (folders only, no `.xml` file filter, an explicit "Choose this folder"
+    action) and writes the chosen absolute path to a new **optional**
+    `output_dir` STRING widget on the node. Empty `output_dir` = the
+    existing default (`<comfy output>/premiere_timelines/<sequence_name>/`);
+    a set `output_dir` writes the timeline folder under THAT base instead
+    (so timelines can land on a project/NAS folder). Backend: §3 gains an
+    optional `output_dir`; when non-empty and absolute it replaces the
+    comfy-output base, still appending the sanitized `sequence_name` folder
+    (never write straight into a user dir's root). Loopback-only + is_local
+    gated exactly like Load's picker.
+  - `Open folder` resolves the effective output folder (via `timeline_dir`,
+    now `output_dir`-aware) and reveals it; before the first run the folder
+    may not exist yet — the button says so rather than erroring. Renamed
+    from "Open output folder" to "Open folder" for parity with Load.
+  Both buttons hidden when `config.is_local` is false, same as Load.
+  `fs/list` gains a documented **`dirsonly`/directory-choose** affordance
+  for this (the picker already lists dirs; the mode just drops the file
+  filter and surfaces a choose-current-folder control) — extend §7.2's
+  entry + `STANDARD-fs-browse.md` if the shared contract needs it.
 - **Growing video inputs on Save Premiere Timeline** (owner report
   2026-07-19: "I can only connect one video; a new connection replaces the
   previous"). The backend already accepts unbounded `video_N` (§3.1); the

@@ -9,11 +9,16 @@
  * working unchanged).
  *
  * - `PremiereLoadTimeline` gets `Browse…` (a modal picker over `GET
- *   /cprb/fs/list`, `.xml` only) and `Open folder` (`POST
+ *   /cprb/fs/list` in FILE mode, `.xml` only) and `Open folder` (`POST
  *   /cprb/open_folder` on the current `file_path` value).
- * - `PremiereSaveTimeline` gets one `Open output folder` button (`GET
- *   /cprb/timeline_dir` → `POST /cprb/open_folder`, or an inline note when
- *   the sequence hasn't been run yet).
+ * - `PremiereSaveTimeline` gets the SAME two-button bar (2026-07-20, see
+ *   the dated header note further down): `Browse…` opens the identical
+ *   modal picker in DIRECTORY-choose mode (no file filter; a "Choose this
+ *   folder" footer action instead of clicking a file row) and writes the
+ *   chosen folder into the node's `output_dir` widget; `Open folder`
+ *   resolves the effective output folder via `GET /cprb/timeline_dir`
+ *   (now `output_dir`-aware) and reveals it, or shows an inline note when
+ *   the sequence hasn't been run yet.
  *
  * Ported from comfyui-epsnodes' `web/lora_library/notebook.js` (same
  * author, same patterns; this pack can't import across repos, so the
@@ -97,6 +102,48 @@
  * rgthree's Power Lora Loader was NOT usable as a reference here (per the
  * task that produced this addition) since it grows WIDGETS, not sockets.
  * Load/Get Shot are untouched; this is Save-only.
+ *
+ * 2026-07-20: PremiereSaveTimeline gains Load's own Browse…/Open-folder bar
+ * (PROTOCOL.md §7.3 amendment — owner: "Save Premiere Timeline does not
+ * have the same Browse…/Open folder as the Load node does", reversing the
+ * PRIOR deliberate asymmetry of "Open output folder" with no Browse…). The
+ * modal picker (openPicker()/loadPickerDir()/renderPickerDialog()/
+ * buildPickerFooter() below) is GENERALIZED rather than forked: it now
+ * takes a small `{mode, ext, startDir, onChoose}` options bag (stashed on
+ * `state.picker` for the picker's lifetime) instead of assuming Load's
+ * file-picking shape everywhere —
+ *
+ *  - `mode: 'file'` (Load, unchanged behavior): `ext`-filtered file rows
+ *    are rendered; clicking one closes the picker and calls `onChoose`
+ *    with the joined absolute path.
+ *  - `mode: 'dir'` (Save, new): `files` are never rendered regardless of
+ *    what `GET /cprb/fs/list` happens to return for them (no route/backend
+ *    change needed for this — the existing `ext` filtering is simply
+ *    ignored client-side in this mode, the "least surface change" this
+ *    was checked against first); a "Choose this folder" footer button
+ *    (disabled at the synthetic `FS_ROOTS` listing, which is not a real
+ *    path) calls `onChoose` with the CURRENT `dir` instead of any row
+ *    being clicked.
+ *
+ * `setFileWidgetValue()` is renamed/generalized to `setWidgetValue(widget,
+ * node, value)` (no longer hardcoded to `state.fileWidget`) so both modes'
+ * `onChoose` callbacks share the same "write through the widget's real
+ * setter + callback" plumbing — Load's writes `file_path`, Save's writes
+ * the new `output_dir` widget (see PROTOCOL.md §3.2). Save's "starting
+ * dir" rule mirrors Load's (PROTOCOL.md §7.3: seed from the target
+ * widget's current value when it looks absolute) but does NOT take a
+ * `dirnameOfServerPath()` step first — `output_dir` already names a
+ * FOLDER, not a file, so the picker opens INSIDE it directly, unlike
+ * Load's file-path-shaped `file_path`.
+ *
+ * Backend compatibility: `output_dir` is a brand-new widget, so a frontend
+ * pulled ahead of a backend restart (the version-mismatch banner in
+ * `settings.js` covers exactly this window) briefly has a node with no
+ * such widget. `attachSaveUi()` treats `outputDirWidget` as OPTIONAL: Open
+ * folder still works exactly as it did before this amendment (an absent
+ * widget reads as `""`, the same default the pre-amendment backend always
+ * used); Browse… is simply omitted until a restart catches the backend up,
+ * rather than the whole bar failing to attach.
  *
  * Vanilla ES modules, no build step, matching the rest of this pack.
  */
@@ -642,8 +689,23 @@ function closePicker(state) {
   state.pickerPathInputEl = null
 }
 
-function openPicker(state) {
+/**
+ * Opens the modal picker over *state.node*, in *options.mode*.
+ * @param {object} state
+ * @param {{mode: 'file'|'dir', ext?: string, startDir?: string|null, onChoose: (path: string) => void}} options
+ * - `mode: 'file'` (Load): file rows are shown, filtered to *ext*; clicking
+ *   one calls `onChoose` with that file's joined absolute path.
+ * - `mode: 'dir'` (Save): file rows are never shown; a "Choose this
+ *   folder" footer action calls `onChoose` with the CURRENT `dir` instead.
+ * Either way, folder rows always navigate (never call `onChoose`
+ * themselves) and *options.startDir* seeds the initial listing exactly like
+ * before this was generalized — each caller computes its own start dir
+ * from whichever widget it's pickering for (PROTOCOL.md §7.3: "the widget's
+ * current value's folder/itself when it looks absolute, else omit dir").
+ */
+function openPicker(state, options) {
   closePicker(state) // only one picker at a time, ever
+  state.picker = options
 
   const backdrop = el('div', { className: 'cprb-picker-backdrop', attrs: { id: PICKER_OVERLAY_ID } })
   const dialog = el('div', { className: 'cprb-picker' })
@@ -668,11 +730,7 @@ function openPicker(state) {
   const content = el('div', { className: 'cprb-picker-content' })
   dialog.append(buildPickerPathBar(state, content), content)
 
-  // PROTOCOL.md §7.3: "starting dir: the widget's current value's folder
-  // when it looks absolute, else omit dir (server defaults to output_dir)".
-  const currentValue = state.fileWidget.value
-  const startDir = looksAbsolutePath(currentValue) ? dirnameOfServerPath(currentValue) : null
-  loadPickerDir(state, content, startDir)
+  loadPickerDir(state, content, options.startDir ?? null)
 }
 
 /**
@@ -722,9 +780,20 @@ function buildPickerPathBar(state, content) {
 
 async function loadPickerDir(state, content, dir) {
   content.replaceChildren(el('div', { className: 'cprb-picker-status', text: 'Loading…' }))
+  // `mode: 'dir'` never sends `ext` at all: STANDARD-fs-browse.md's own
+  // rule is that a blank/missing `ext` falls back to the pack's default
+  // allowlist (`.xml`), never "everything" — there's no query value that
+  // means "no files please" on the CURRENT contract, and adding one is
+  // more surface than this needed (PROTOCOL.md §7.3's own "least surface
+  // change" steer). Simpler: the server still computes a `files` list same
+  // as always, and renderPickerDialog() below just never renders it in
+  // this mode.
+  const params = {}
+  if (dir) params.dir = dir
+  if (state.picker.mode === 'file') params.ext = state.picker.ext || PICKER_EXT
   let data
   try {
-    data = await api.getJson('/cprb/fs/list', dir ? { dir, ext: PICKER_EXT } : { ext: PICKER_EXT })
+    data = await api.getJson('/cprb/fs/list', params)
   } catch (error) {
     api.warn('fs/list failed', error)
     // PROTOCOL.md §7.2: a bad/unreadable `dir` (typed by hand or not) is a
@@ -787,40 +856,87 @@ function renderPickerDialog(state, content, data) {
     row.addEventListener('click', () => loadPickerDir(state, content, target))
     list.append(row)
   }
-  for (const file of data.files || []) {
-    const row = el('div', { className: 'cprb-picker-row', text: file.name })
-    row.addEventListener('click', () => {
-      closePicker(state)
-      setFileWidgetValue(state, joinServerPath(data.dir, file.name, data.sep))
-    })
-    list.append(row)
+  // `mode: 'dir'` (Save's directory-choose picker, PROTOCOL.md §7.3) never
+  // renders file rows — no backend/route change needed for this: the
+  // server still returns whatever `.xml`-filtered `files` it always did
+  // (see loadPickerDir() above), this mode simply never looks at them.
+  const showFiles = state.picker.mode === 'file'
+  if (showFiles) {
+    for (const file of data.files || []) {
+      const row = el('div', { className: 'cprb-picker-row', text: file.name })
+      row.addEventListener('click', () => {
+        const path = joinServerPath(data.dir, file.name, data.sep)
+        closePicker(state)
+        state.picker.onChoose(path)
+      })
+      list.append(row)
+    }
   }
-  if (data.parent === null && !(data.dirs || []).length && !(data.files || []).length) {
-    list.append(el('div', { className: 'cprb-picker-empty', text: `No subfolders or ${PICKER_EXT} files here.` }))
+  const hasFiles = showFiles && (data.files || []).length > 0
+  if (data.parent === null && !(data.dirs || []).length && !hasFiles) {
+    const emptyText = showFiles
+      ? `No subfolders or ${state.picker.ext || PICKER_EXT} files here.`
+      : 'No subfolders here.'
+    list.append(el('div', { className: 'cprb-picker-empty', text: emptyText }))
   }
 
-  content.replaceChildren(header, list, buildPickerFooter(state))
+  content.replaceChildren(header, list, buildPickerFooter(state, data))
 }
 
-function buildPickerFooter(state) {
+/**
+ * The picker's footer: always a Cancel button; `mode: 'dir'` (Save's
+ * directory-choose picker) also gets a "Choose this folder" action that
+ * calls `state.picker.onChoose` with the CURRENT `dir` instead of any row
+ * being clicked — PROTOCOL.md §7.3's "let the user choose the currently-
+ * open folder". Disabled at the synthetic `FS_ROOTS` listing (no real path
+ * to choose there) and while *data* itself is missing (the loadPickerDir()
+ * error branch above, which has no successful listing to choose FROM).
+ * @param {object} state
+ * @param {object|null} [data] - the last successful `fs/list` response, or
+ * `null`/`undefined` from the error branch.
+ */
+function buildPickerFooter(state, data) {
+  const buttons = []
+  if (state.picker.mode === 'dir') {
+    const canChoose = Boolean(data) && data.dir !== FS_ROOTS
+    const chooseBtn = el('button', {
+      className: 'cprb-btn cprb-btn-small',
+      text: 'Choose this folder',
+      attrs: { title: canChoose ? 'Use this folder' : 'Navigate into a real folder first' }
+    })
+    chooseBtn.disabled = !canChoose
+    chooseBtn.addEventListener('click', () => {
+      if (chooseBtn.disabled) return
+      const chosenDir = data.dir
+      closePicker(state)
+      state.picker.onChoose(chosenDir)
+    })
+    buttons.push(chooseBtn)
+  }
   const cancelBtn = el('button', { className: 'cprb-btn cprb-btn-small', text: 'Cancel' })
   cancelBtn.addEventListener('click', () => closePicker(state))
-  return el('div', { className: 'cprb-picker-footer' }, [cancelBtn])
+  buttons.push(cancelBtn)
+  return el('div', { className: 'cprb-picker-footer' }, buttons)
 }
 
-/** Writes *value* through the `file_path` widget's real setter + callback
- * (PROTOCOL.md §7.3), so picking a file behaves exactly like typing it in.
- * Ported from notebook.js's identical setFileWidgetValue(). */
-function setFileWidgetValue(state, value) {
-  const widget = state.fileWidget
+/** Writes *value* through *widget*'s real setter + callback (PROTOCOL.md
+ * §7.3), so picking a file/folder behaves exactly like typing it in.
+ * Ported from notebook.js's identical setFileWidgetValue(), then
+ * generalized 2026-07-20 from a `state.fileWidget`-only helper to any
+ * widget on *node* — Load's picker (`mode: 'file'`) writes `file_path`;
+ * Save's (`mode: 'dir'`) writes the new `output_dir` widget; both go
+ * through this one function via their own `onChoose` callback (see the
+ * file header's 2026-07-20 note) so neither picker mode needs its own copy
+ * of this plumbing. */
+function setWidgetValue(widget, node, value) {
   if (widget.value === value) return
   widget.value = value
   try {
     widget.callback?.(value)
   } catch (error) {
-    api.warn('file_path widget callback threw', error)
+    api.warn(`${widget.name} widget callback threw`, error)
   }
-  state.node.graph?.setDirtyCanvas(true, true)
+  node.graph?.setDirtyCanvas(true, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -838,6 +954,7 @@ function attachLoadUi(node) {
     node,
     fileWidget,
     isLocal: null,
+    picker: null,
     pickerKeydownHandler: null,
     pickerPathInputEl: null,
     noteEl: null,
@@ -860,7 +977,16 @@ function attachLoadUi(node) {
 
   state.browseBtn.addEventListener('click', () => {
     if (state.browseBtn.disabled) return
-    openPicker(state)
+    // PROTOCOL.md §7.3: "starting dir: the widget's current value's folder
+    // when it looks absolute, else omit dir (server defaults to output_dir)".
+    const currentValue = state.fileWidget.value
+    const startDir = looksAbsolutePath(currentValue) ? dirnameOfServerPath(currentValue) : null
+    openPicker(state, {
+      mode: 'file',
+      ext: PICKER_EXT,
+      startDir,
+      onChoose: (path) => setWidgetValue(state.fileWidget, state.node, path)
+    })
   })
   state.openFolderBtn.addEventListener('click', () => {
     runButtonAction(state.openFolderBtn, () => onOpenFolderClickLoad(state)).catch((error) =>
@@ -1084,7 +1210,8 @@ function wireVideoInputGrowth(node) {
 }
 
 // ---------------------------------------------------------------------------
-// PremiereSaveTimeline: Open output folder
+// PremiereSaveTimeline: Browse…/Open folder (PROTOCOL.md §7.3, 2026-07-20
+// amendment — parity with Load's own bar; see the file header's dated note).
 // ---------------------------------------------------------------------------
 
 function attachSaveUi(node) {
@@ -1103,41 +1230,95 @@ function attachSaveUi(node) {
     api.warn('PremiereSaveTimeline node is missing its sequence_name widget; file bar not attached')
     return
   }
+  // `output_dir` is a brand-new widget (PROTOCOL.md §3.2) — treated as
+  // OPTIONAL here, not a second hard guard next to sequence_name's above,
+  // so a frontend pulled ahead of a backend restart degrades gracefully:
+  // Open folder keeps working exactly as it did before this amendment
+  // (reads as `""`, the same default the pre-amendment backend always
+  // used) and only Browse… — which has nowhere to write without this
+  // widget — is omitted, rather than the whole bar failing to attach. See
+  // the file header's 2026-07-20 note.
+  const outputDirWidget = findWidget(node, 'output_dir')
 
   const state = {
     node,
     sequenceNameWidget,
+    outputDirWidget,
     isLocal: null,
+    picker: null,
     pickerKeydownHandler: null,
     pickerPathInputEl: null,
     noteEl: null,
     statusEl: null,
     gatedButtons: [],
-    openOutputFolderBtn: null
+    browseBtn: null,
+    openFolderBtn: null
   }
 
-  state.openOutputFolderBtn = el('button', {
+  const buttons = []
+  if (outputDirWidget) {
+    state.browseBtn = el('button', {
+      className: 'cprb-btn',
+      text: 'Browse…',
+      attrs: { title: "Pick this timeline's output folder on the server" }
+    })
+    state.browseBtn.addEventListener('click', () => {
+      if (state.browseBtn.disabled) return
+      // PROTOCOL.md §7.3's starting-dir rule, Save's own shape: seed
+      // INSIDE the widget's current value directly (it already names a
+      // FOLDER, unlike Load's file_path) when it looks absolute, else omit
+      // dir (server defaults to output_dir) — no dirnameOfServerPath()
+      // step, unlike Load's Browse…, above.
+      const currentValue = outputDirWidget.value
+      const startDir = looksAbsolutePath(currentValue) ? String(currentValue).trim() : null
+      openPicker(state, {
+        mode: 'dir',
+        startDir,
+        onChoose: (path) => setWidgetValue(outputDirWidget, state.node, path)
+      })
+    })
+    buttons.push(state.browseBtn)
+  } else {
+    api.warn(
+      'PremiereSaveTimeline node has no output_dir widget yet (backend not restarted after an ' +
+        'update?) — Browse… omitted; Open folder still works with the default output folder'
+    )
+  }
+
+  state.openFolderBtn = el('button', {
     className: 'cprb-btn',
-    text: 'Open output folder',
+    text: 'Open folder',
     attrs: { title: "Reveal this sequence's output folder on the server machine" }
   })
-  state.openOutputFolderBtn.addEventListener('click', () => {
-    runButtonAction(state.openOutputFolderBtn, () => onOpenOutputFolderClick(state)).catch((error) =>
-      api.warn('open output folder failed', error)
+  state.openFolderBtn.addEventListener('click', () => {
+    runButtonAction(state.openFolderBtn, () => onOpenFolderClickSave(state)).catch((error) =>
+      api.warn('open folder failed', error)
     )
   })
+  buttons.push(state.openFolderBtn)
 
-  const bar = buildBar(state, [state.openOutputFolderBtn])
+  const bar = buildBar(state, buttons)
   attachBarWidget(node, bar)
   wireCleanup(state)
 
   refreshGating(state).catch((error) => api.warn('initial config load failed', error))
 }
 
-async function onOpenOutputFolderClick(state) {
+async function onOpenFolderClickSave(state) {
   const sequenceName = String(state.sequenceNameWidget.value || '')
+  // PROTOCOL.md §7.3/§3.2: pass the SAME output_dir the node itself would
+  // run with (blank when there's no widget yet, or the user never set one)
+  // so this always resolves the IDENTICAL effective folder `execute()`
+  // would write to — the `timeline_dir` route applies the exact same
+  // fallback rule the node's own execute() does (both call
+  // BridgeContext.resolve_timeline_dir), so this never needs to duplicate
+  // that "is it absolute" logic here.
+  const outputDir = String(state.outputDirWidget?.value || '')
   try {
-    const data = await api.getJson('/cprb/timeline_dir', { sequence_name: sequenceName })
+    const data = await api.getJson('/cprb/timeline_dir', {
+      sequence_name: sequenceName,
+      output_dir: outputDir
+    })
     if (!data || data.exists === false) {
       // PROTOCOL.md §7.3: "Before the first run the folder may not exist
       // yet: the button says so rather than erroring."
@@ -1147,7 +1328,7 @@ async function onOpenOutputFolderClick(state) {
     await api.postJson('/cprb/open_folder', { path: data.dir })
     setStatus(state, '')
   } catch (error) {
-    api.warn('open output folder failed', error)
+    api.warn('open folder failed', error)
     setStatus(state, error.message || 'Could not open folder.', true)
   }
 }

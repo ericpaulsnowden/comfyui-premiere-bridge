@@ -468,15 +468,107 @@ def test_execute_accepts_unbounded_video_n_in_ascending_order(
 
 
 def test_input_types_optional_accepts_arbitrary_video_n_key() -> None:
-    """The flexible-optional-inputs dict: only ``video_1`` is actually stored
-    (one visible socket by default), but ``in`` must say yes to ANY
+    """The flexible-optional-inputs dict: ``video_1`` and ``output_dir`` are
+    the only two ACTUALLY stored keys (one visible video socket by default,
+    plus the §3.2 output-folder override), but ``in`` must say yes to ANY
     ``video_N`` -- e.g. ``video_5`` -- so ComfyUI's input validation accepts
     a workflow that wires an unbounded socket the frontend later grows."""
     optional = PremiereSaveTimeline.INPUT_TYPES()["optional"]
 
-    assert list(optional.keys()) == ["video_1"]
+    assert set(optional.keys()) == {"video_1", "output_dir"}
     assert "video_1" in optional
     assert "video_5" in optional
     assert "video_37" in optional
     assert optional["video_37"] == ("VIDEO",)
     assert "not_a_video_input" not in optional
+    assert optional["output_dir"][0] == "STRING"
+    assert optional["output_dir"][1]["default"] == ""
+
+
+# --- §3.2 output_dir override -------------------------------------------------
+
+
+def test_execute_output_dir_empty_keeps_default_output_tree(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    """Omitting ``output_dir`` entirely (every pre-existing call site) must
+    reproduce the original ``<output>/premiere_timelines/<name>/`` tree."""
+    clip = _write_path_line(tmp_path, "clip.mov")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="No Override", fps="24", paths=str(clip), write_edl=False, write_otio=False
+    )
+
+    expected = context.output_dir / "premiere_timelines" / "No Override" / "No Override.xml"
+    assert Path(result["result"][0]) == expected
+    assert expected.exists()
+
+
+def test_execute_output_dir_absolute_writes_under_that_base_without_premiere_timelines(
+    tmp_path: Path,
+) -> None:
+    """A non-empty, ABSOLUTE ``output_dir`` replaces the base directly --
+    ``<output_dir>/<sanitized sequence_name>/`` -- with NO
+    ``premiere_timelines`` middle folder, and never straight into
+    ``output_dir``'s own root (PROTOCOL.md §3.2)."""
+    custom_base = tmp_path / "nas_project"
+    custom_base.mkdir()
+    clip = _write_path_line(tmp_path, "clip.mov")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="NAS Cut", fps="24", paths=str(clip), write_edl=False, write_otio=False,
+        output_dir=str(custom_base),
+    )
+
+    expected_dir = custom_base / "NAS Cut"
+    expected_xml = expected_dir / "NAS Cut.xml"
+    assert Path(result["result"][0]) == expected_xml
+    assert expected_xml.exists()
+    # Never written straight into the given dir's own root:
+    assert not (custom_base / "NAS Cut.xml").exists()
+    # And never the default tree either:
+    assert "premiere_timelines" not in str(expected_xml)
+
+
+def test_execute_output_dir_non_absolute_is_rejected_and_falls_back_with_a_warning(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    """A non-empty, NON-absolute ``output_dir`` is a clean, forgiving
+    rejection: fall back to the default output tree and say so in the run's
+    own UI summary -- never a hard failure over a hand-typed path mistake."""
+    clip = _write_path_line(tmp_path, "clip.mov")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="Bad Override", fps="24", paths=str(clip), write_edl=False,
+        write_otio=False, output_dir="relative/not/absolute",
+    )
+
+    expected = context.output_dir / "premiere_timelines" / "Bad Override" / "Bad Override.xml"
+    assert Path(result["result"][0]) == expected
+    assert expected.exists()
+
+    summary = "\n".join(result["ui"]["text"])
+    assert "relative/not/absolute" in summary
+    assert "not an absolute path" in summary
+
+
+def test_execute_output_dir_whitespace_only_is_treated_as_empty_without_warning(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    """Whitespace-only ``output_dir`` is the ordinary "nothing given" case --
+    never worth a warning, just the default tree."""
+    clip = _write_path_line(tmp_path, "clip.mov")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="Blank Override", fps="24", paths=str(clip), write_edl=False,
+        write_otio=False, output_dir="   ",
+    )
+
+    expected = context.output_dir / "premiere_timelines" / "Blank Override" / "Blank Override.xml"
+    assert Path(result["result"][0]) == expected
+    summary = "\n".join(result["ui"]["text"])
+    assert "not an absolute path" not in summary

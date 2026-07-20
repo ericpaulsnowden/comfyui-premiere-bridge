@@ -382,3 +382,72 @@ async def test_timeline_dir_sanitizes_like_the_writer(
     ).json()
     assert data["dir"] == str(context.resolve_timeline_dir("Bad:Name?/x"))
     assert ":" not in Path(data["dir"]).name
+
+
+# --------------------------------------------- timeline_dir: output_dir (§3.2)
+#
+# 2026-07-20: PremiereSaveTimeline gained an optional `output_dir` override
+# (owner ask: give Save the same Browse…/Open folder bar Load has). This
+# route must resolve the IDENTICAL effective folder the node itself would
+# write to, given the SAME (possibly absent/blank/invalid) `output_dir` --
+# both go through the one `BridgeContext.resolve_timeline_dir`.
+
+
+async def test_timeline_dir_output_dir_absolute_overrides_the_default_base(
+    client, tmp_path: Path
+) -> None:
+    custom_base = tmp_path / "nas_project"
+    data = await (
+        await client.get(
+            "/cprb/timeline_dir",
+            params={"sequence_name": "NAS Cut", "output_dir": str(custom_base)},
+        )
+    ).json()
+    assert data["dir"] == str(custom_base / "NAS Cut")
+    assert "premiere_timelines" not in data["dir"]
+    assert data["exists"] is False
+
+
+async def test_timeline_dir_output_dir_matches_resolve_timeline_dir(
+    client, context: BridgeContext, tmp_path: Path
+) -> None:
+    custom_base = tmp_path / "elsewhere"
+    data = await (
+        await client.get(
+            "/cprb/timeline_dir",
+            params={"sequence_name": "Match Me", "output_dir": str(custom_base)},
+        )
+    ).json()
+    assert data["dir"] == str(context.resolve_timeline_dir("Match Me", str(custom_base)))
+
+
+async def test_timeline_dir_output_dir_non_absolute_falls_back_to_default_without_400(
+    client, context: BridgeContext
+) -> None:
+    # Unlike `fs/list`'s `dir` param, a bad `output_dir` here never 400s --
+    # it silently resolves to exactly what the node itself would fall back
+    # to (the node is the one that surfaces a "rejected" warning; this
+    # route only ever mirrors the effective result).
+    response = await client.get(
+        "/cprb/timeline_dir",
+        params={"sequence_name": "Fallback", "output_dir": "not/absolute"},
+    )
+    assert response.status == 200
+    data = await response.json()
+    expected = context.output_dir / "premiere_timelines" / "Fallback"
+    assert data["dir"] == str(expected)
+
+
+async def test_timeline_dir_output_dir_blank_matches_omitted(
+    client, context: BridgeContext
+) -> None:
+    with_blank = await (
+        await client.get(
+            "/cprb/timeline_dir", params={"sequence_name": "Same", "output_dir": ""}
+        )
+    ).json()
+    omitted = await (
+        await client.get("/cprb/timeline_dir", params={"sequence_name": "Same"})
+    ).json()
+    assert with_blank == omitted
+    assert with_blank["dir"] == str(context.output_dir / "premiere_timelines" / "Same")

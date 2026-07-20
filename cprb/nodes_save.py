@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from . import timeline_write
-from .context import BridgeContext, sanitize_name
+from .context import BridgeContext, output_dir_override_is_rejected, sanitize_name
 
 logger = logging.getLogger("cprb")
 
@@ -220,14 +220,30 @@ class PremiereSaveTimeline:
     PROTOCOL.md §4), plus ``.edl``/``.otio`` when ``write_edl``/
     ``write_otio`` are set (§5 / soft-dependency OTIO).
 
+    ``output_dir`` (optional STRING, default ``""``, PROTOCOL.md §3.2, owner
+    ask 2026-07-20): empty keeps writing under the §2 default
+    (``<comfy output>/premiere_timelines/<sanitized sequence_name>/``); a
+    non-empty, ABSOLUTE value replaces that base directly
+    (``<output_dir>/<sanitized sequence_name>/`` -- no ``premiere_timelines``
+    middle folder, and never straight into ``output_dir``'s own root). A
+    non-empty value that ISN'T absolute is rejected CLEANLY: a warning (both
+    the server log and this run's own summary text) and the default base is
+    used instead -- never a hard failure over a hand-typed path mistake. See
+    :func:`cprb.context.BridgeContext.resolve_timeline_dir`, which the
+    ``GET /cprb/timeline_dir`` route also calls with the SAME *output_dir* so
+    the frontend's "Open folder" button resolves the identical effective
+    path this method will actually write to.
+
     ``OUTPUT_NODE = True``: this node exists for its filesystem side effects.
     Returns ``timeline_path`` (the written ``.xml``'s absolute path) and a UI
     text summary listing every file written, how many ``paths`` entries were
-    linked vs collected, plus any warnings (currently only "otio skipped
-    (not installed)", when ``write_otio`` is set but ``opentimelineio``
-    isn't).
+    linked vs collected, plus any warnings (currently: "otio skipped (not
+    installed)" when ``write_otio`` is set but ``opentimelineio`` isn't, and
+    a rejected ``output_dir`` per above).
 
-    Raises (never silently drops a clip or a file):
+    Raises (never silently drops a clip or a file -- a bad ``output_dir`` is
+    the one widget mistake this node forgives rather than raises on, per
+    above):
 
     * :class:`cprb.probe.ProbeError` -- a materialized ``video_N`` or a
       ``paths`` line couldn't be probed; the message names the input
@@ -257,7 +273,34 @@ class PremiereSaveTimeline:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
-        optional = _FlexibleOptionalVideoInputs({"video_1": ("VIDEO",)})
+        optional = _FlexibleOptionalVideoInputs(
+            {
+                "video_1": ("VIDEO",),
+                # PROTOCOL.md §3.2 (owner ask 2026-07-20, parity with
+                # PremiereLoadTimeline's file bar): an OPTIONAL absolute-path
+                # override for the §2 output base. Lives in `optional` (not
+                # `required`, unlike this node's other widgets) so an
+                # API-format prompt written before this widget existed --
+                # or any other caller that never mentions it -- keeps
+                # working with no "required input missing" error; the
+                # `output_dir=""` default in `execute()` below is the SAME
+                # fallback either way. `web/cprb/nodes.js`'s Browse… writes
+                # a chosen folder here through the widget's real setter,
+                # exactly like Load's Browse… does for `file_path`.
+                "output_dir": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "tooltip": (
+                            "Optional: an absolute folder to write this timeline under, "
+                            "instead of <ComfyUI output>/premiere_timelines/ (still gets its "
+                            "own <sequence_name> subfolder either way). Leave empty for the "
+                            "default."
+                        ),
+                    },
+                ),
+            }
+        )
         return {
             "required": {
                 "sequence_name": ("STRING", {"default": DEFAULT_SEQUENCE_NAME}),
@@ -278,6 +321,7 @@ class PremiereSaveTimeline:
         write_edl: bool,
         write_otio: bool,
         media: str = DEFAULT_MEDIA,
+        output_dir: str = "",
         **kwargs: Any,
     ) -> dict[str, Any]:
         if _context is None:
@@ -291,12 +335,31 @@ class PremiereSaveTimeline:
         # Lazy: keeps this module importable (e.g. for FPS_CHOICES) without PyAV.
         from .probe import ProbeError, probe_media
 
-        out_dir = _context.timeline_dir(sequence_name)
-        media_dir = out_dir / "media"
-
         clips: list[timeline_write.ClipSpec] = []
         written: list[str] = []
         warnings: list[str] = []
+
+        # PROTOCOL.md §3.2: a non-empty `output_dir` that ISN'T absolute is
+        # rejected CLEANLY -- never a hard failure over what's very likely a
+        # hand-typed typo in an otherwise-fine run -- a server-log warning
+        # plus a line in this run's own UI summary (same visibility the
+        # `write_otio`-missing soft-dependency warning below already gets),
+        # then `BridgeContext.timeline_dir` independently falls back to the
+        # default base on its own (it re-checks validity itself; this block
+        # exists ONLY to be loud about that fallback, not to compute it).
+        if output_dir_override_is_rejected(output_dir):
+            logger.warning(
+                "cprb save_timeline: output_dir %r is not an absolute path; "
+                "using the default output folder instead",
+                output_dir,
+            )
+            warnings.append(
+                f"output_dir {output_dir!r} is not an absolute path -- wrote to the default "
+                "output folder instead"
+            )
+
+        out_dir = _context.timeline_dir(sequence_name, output_dir)
+        media_dir = out_dir / "media"
 
         for index, video in _video_kwargs(kwargs):
             dest = _materialize_video(media_dir, index, video)
