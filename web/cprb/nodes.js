@@ -1,4 +1,6 @@
 /**
+ * fs-browse dialog v1 — synced from STANDARD-fs-browse.md
+ *
  * @file File-bar UI for `PremiereLoadTimeline` / `PremiereSaveTimeline`
  * nodes (PROTOCOL.md §7.3): a small `addDOMWidget` bar under each node's
  * own widgets, gated by §7.2's `GET /cprb/config` `is_local` (§7.1 — the
@@ -67,6 +69,21 @@
  * what `ROOTS` happens to enumerate on this machine; a bad path 400s into
  * the same inline error state the rest of the picker already used.
  *
+ * STANDARDIZED 2026-07-19 (../../STANDARD-fs-browse.md, the cross-plugin
+ * "server filesystem Browse" contract shared with cpsb's/epsnodes' own
+ * pickers): `GET /cprb/fs/list` reshaped its response to NAMES-ONLY
+ * `dirs`/`files` entries (`{"name"}` / `{"name","size","mtime"}`) plus a
+ * `sep` field — this picker now joins `dir` + `sep` + `name` itself
+ * (`joinServerPath()`, now preferring the server-reported `sep` over its old
+ * heuristic) instead of receiving bare path strings. The `ROOTS` sentinel's
+ * listing is unchanged in spirit (still a synthetic top-level list a drive
+ * root's `parent` climbs back to) but now ALSO includes this pack's own
+ * default output dir and "Home" (labeled, `{"name","path"}` entries —
+ * STANDARD-fs-browse.md's documented ROOTS extension) ahead of the platform
+ * drives/volumes, and (2026-07-19) is synthesized on macOS/POSIX too, not
+ * just Windows. Locality: cprb's `FS_LIST_LOCAL_ONLY` build-time flag stays
+ * `True` (unchanged loopback-only posture, PROTOCOL.md §7.1).
+ *
  * Vanilla ES modules, no build step, matching the rest of this pack.
  */
 
@@ -87,9 +104,10 @@ const BAR_HEIGHT = 34
 /** §7.2's `fs/list` extension allowlist for the Load node's picker. */
 const PICKER_EXT = '.xml'
 
-/** §7.2's `fs/list` sentinel for "the top level" — every Windows drive, or
- * the POSIX filesystem root. A drive root's own `parent` echoes this back
- * too, so the picker's `..` row climbs here instead of getting stuck at
+/** STANDARD-fs-browse.md's `fs/list` sentinel for "the top level" — this
+ * pack's own default output dir (labeled) + Home, then every Windows drive
+ * or every macOS `/Volumes` mount. A drive root's own `parent` echoes this
+ * back too, so the picker's `..` row climbs here instead of getting stuck at
  * the top of one drive (the 2026-07-19 fix). */
 const FS_ROOTS = 'ROOTS'
 
@@ -560,9 +578,19 @@ function looksAbsolutePath(value) {
   return false
 }
 
-function joinServerPath(dir, name) {
-  const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/'
-  return dir.endsWith(sep) ? `${dir}${name}` : `${dir}${sep}${name}`
+/**
+ * @param {string} dir
+ * @param {string} name
+ * @param {string} [sep] - STANDARD-fs-browse.md's server-reported `sep`
+ * (`GET /cprb/fs/list`'s response field) — preferred when given, since it's
+ * authoritative for the machine actually being browsed. Falls back to the
+ * old heuristic (present-backslash-without-forward-slash) only for call
+ * sites with no response to read a `sep` from (e.g. `dirnameOfServerPath`
+ * below, seeding the picker from a widget's already-typed value).
+ */
+function joinServerPath(dir, name, sep) {
+  const separator = sep || (dir.includes('\\') && !dir.includes('/') ? '\\' : '/')
+  return dir.endsWith(separator) ? `${dir}${name}` : `${dir}${separator}${name}`
 }
 
 function dirnameOfServerPath(path) {
@@ -707,7 +735,10 @@ function renderPickerDialog(state, content, data) {
   }
 
   const isRootsList = data.dir === FS_ROOTS
-  const headerText = isRootsList ? 'Drives' : data.dir
+  // "Top Level" (not "Drives" — 2026-07-19: the ROOTS listing now also
+  // carries this pack's own default output dir + "Home" ahead of the
+  // platform drives/volumes, so "Drives" alone stopped being accurate).
+  const headerText = isRootsList ? 'Top Level' : data.dir
   const header = el('div', {
     className: 'cprb-picker-header',
     text: frontTruncate(headerText),
@@ -723,21 +754,23 @@ function renderPickerDialog(state, content, data) {
     upRow.addEventListener('click', () => loadPickerDir(state, content, data.parent))
     list.append(upRow)
   }
-  for (const name of data.dirs || []) {
-    // At the ROOTS listing, `dirs` are already full drive roots (e.g.
-    // "C:\\") — shown and navigated to as-is. Everywhere else they're
-    // plain names: shown with a trailing slash (marks a folder row — no
-    // emoji, plain and unambiguous) and joined onto the current dir.
-    const row = el('div', { className: 'cprb-picker-row', text: isRootsList ? name : `${name}/` })
-    const target = isRootsList ? name : joinServerPath(data.dir, name)
+  for (const dir of data.dirs || []) {
+    // STANDARD-fs-browse.md: at the ROOTS listing, each entry is
+    // independently rooted (this pack's default output dir, "Home", a
+    // drive/volume) and carries its own `path` — navigate there as-is.
+    // Everywhere else, entries are names-only: shown with a trailing slash
+    // (marks a folder row — no emoji, plain and unambiguous) and joined
+    // onto the current `dir` + the server-reported `sep`.
+    const row = el('div', { className: 'cprb-picker-row', text: isRootsList ? dir.name : `${dir.name}/` })
+    const target = isRootsList ? dir.path : joinServerPath(data.dir, dir.name, data.sep)
     row.addEventListener('click', () => loadPickerDir(state, content, target))
     list.append(row)
   }
-  for (const name of data.files || []) {
-    const row = el('div', { className: 'cprb-picker-row', text: name })
+  for (const file of data.files || []) {
+    const row = el('div', { className: 'cprb-picker-row', text: file.name })
     row.addEventListener('click', () => {
       closePicker(state)
-      setFileWidgetValue(state, joinServerPath(data.dir, name))
+      setFileWidgetValue(state, joinServerPath(data.dir, file.name, data.sep))
     })
     list.append(row)
   }
