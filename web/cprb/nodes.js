@@ -84,6 +84,20 @@
  * just Windows. Locality: cprb's `FS_LIST_LOCAL_ONLY` build-time flag stays
  * `True` (unchanged loopback-only posture, PROTOCOL.md §7.1).
  *
+ * 2026-07-19: added growing `video_N` INPUT sockets on PremiereSaveTimeline
+ * only (PROTOCOL.md §7.3 "Growing video inputs" — owner report: "I can only
+ * connect one video; a new connection replaces the previous one"). The
+ * backend already accepted unbounded `video_N` (§3.1's
+ * `_FlexibleOptionalVideoInputs`); only the socket itself needed to grow.
+ * See `wireVideoInputGrowth()`/`convergeVideoInputs()` below for the
+ * algorithm; both cite the exact litegraph fork source lines
+ * (`addInput`/`removeInput`/`onConnectionsChange`/`configure`, all in
+ * `LGraphNode.ts`) this was checked against, plus core's own
+ * `PrimitiveNode` (`widgetInputs.ts`) for the closest in-tree precedent —
+ * rgthree's Power Lora Loader was NOT usable as a reference here (per the
+ * task that produced this addition) since it grows WIDGETS, not sockets.
+ * Load/Get Shot are untouched; this is Save-only.
+ *
  * Vanilla ES modules, no build step, matching the rest of this pack.
  */
 
@@ -113,6 +127,13 @@ const FS_ROOTS = 'ROOTS'
 
 const STYLE_TAG_ID = 'cprb-node-ui-styles'
 const PICKER_OVERLAY_ID = 'cprb-picker-overlay'
+
+/** PROTOCOL.md §3.1's unbounded `video_N` socket names on
+ * PremiereSaveTimeline — matched against `INodeInputSlot.name`, never
+ * against the backend's own key order, so a socket's ARRAY position in
+ * `node.inputs` is never assumed to equal its numeric `N` (see
+ * videoInputEntries() below). */
+const VIDEO_INPUT_RE = /^video_(\d+)$/
 
 /** Nodes we've already attached to — guards against a double `nodeCreated`. */
 const attachedNodes = new WeakSet()
@@ -872,10 +893,211 @@ async function onOpenFolderClickLoad(state) {
 }
 
 // ---------------------------------------------------------------------------
+// PremiereSaveTimeline: growing `video_N` inputs (PROTOCOL.md §7.3 "Growing
+// video inputs"). rgthree/core image-batch pattern: exactly one trailing
+// EMPTY `video_N` socket exists at all times; connecting it grows a fresh
+// one after it; disconnecting collapses a run of trailing empties back to
+// one. A CONNECTED slot is never renamed or removed, even mid-range (a
+// disconnected middle slot is left as a gap, per spec).
+//
+// litegraph fork APIs this was checked against (this pack's own scratchpad
+// checkout of ComfyUI_frontend):
+//   - `LGraphNode.addInput(name, type, extra_info?)` — LGraphNode.ts:1700.
+//   - `LGraphNode.removeInput(slot: number)` — LGraphNode.ts:1726; splices
+//     `node.inputs` by ARRAY POSITION and disconnects first if linked.
+//   - `onConnectionsChange(type, index, isConnected, link_info,
+//     inputOrOutput)` — signature at LGraphNode.ts:623; fired from (at
+//     least) connect() (:3007-3021), disconnectInput()/disconnectOutput()
+//     (:3156-3169, :3208-3225, :3321-3334), AND configure() (:882-893, see
+//     below).
+// ---------------------------------------------------------------------------
+
+/**
+ * *node*'s current `video_N` sockets, one entry per slot whose name matches
+ * `VIDEO_INPUT_RE`. `idx` is the slot's position in `node.inputs` (what
+ * `removeInput(idx)` wants); `n` is its parsed number (what "trailing"
+ * below is computed from) — kept separate because this file never assumes
+ * the two stay in lockstep (a hand-edited workflow JSON could in principle
+ * save them out of order; `configure()`'s own input-merge logic also
+ * appends "extra" saved inputs after the class-def ones by NAME lookup, not
+ * by number).
+ * @param {object} node
+ * @returns {{idx: number, n: number, input: object, connected: boolean}[]}
+ */
+function videoInputEntries(node) {
+  const entries = []
+  const inputs = node.inputs || []
+  for (let idx = 0; idx < inputs.length; idx++) {
+    const input = inputs[idx]
+    const match = input && VIDEO_INPUT_RE.exec(input.name)
+    if (!match) continue
+    entries.push({ idx, n: Number(match[1]), input, connected: input.link != null })
+  }
+  return entries
+}
+
+/**
+ * Adds a fresh, empty `video_{n}` VIDEO input. Clones `type`/`shape` off
+ * *template* (normally the existing `video_1`) instead of hardcoding them,
+ * so a dynamically added slot looks/behaves exactly like the one ComfyUI's
+ * own class-def machinery created for `video_1` (`{shape:
+ * RenderShape.HollowCircle}` for every optional input, per this fork's
+ * `litegraphService.ts` `addInputSocket()`) without this bundler-free
+ * vanilla-JS file needing to import that enum just to repeat the same
+ * numeric value.
+ * @param {object} node
+ * @param {number} n
+ * @param {object|null} template - an existing `video_N` input slot, or
+ * `null` on the defensive first-run path where none exists yet.
+ */
+function addVideoInput(node, n, template) {
+  const type = template?.type ?? 'VIDEO'
+  const extraInfo = template && template.shape !== undefined ? { shape: template.shape } : undefined
+  return node.addInput(`video_${n}`, type, extraInfo)
+}
+
+/**
+ * Grows/shrinks *node*'s `video_N` sockets to this file's one invariant:
+ * every CONNECTED `video_N` keeps its name/link untouched (never
+ * renumbered, never removed — a disconnected MIDDLE slot is left exactly
+ * as a gap), and exactly ONE trailing EMPTY slot exists, numbered one past
+ * the highest connected `video_N` (`video_1` itself, empty, when nothing
+ * is connected at all).
+ *
+ * Idempotent — every call site below calls this unconditionally rather
+ * than trying to decide "did this particular event actually need a
+ * change", so calling it redundantly (e.g. on a node that's already
+ * converged) is the expected common case, not an edge case.
+ * @param {object} node
+ */
+function convergeVideoInputs(node) {
+  if (!node.inputs) return
+  const entries = videoInputEntries(node)
+  if (entries.length === 0) {
+    // Defensive only: PremiereSaveTimeline's INPUT_TYPES always declares
+    // `video_1` (cprb/nodes_save.py's _FlexibleOptionalVideoInputs), so
+    // ComfyUI's own node construction gives every node this one slot
+    // before nodeCreated (and this function) ever runs. Kept in case a
+    // future INPUT_TYPES change ever drops that default.
+    addVideoInput(node, 1, null)
+    return
+  }
+
+  let highestConnectedN = 0
+  for (const entry of entries) {
+    if (entry.connected && entry.n > highestConnectedN) highestConnectedN = entry.n
+  }
+  const desiredSpareN = highestConnectedN + 1
+  const trailingEmpties = entries.filter((entry) => !entry.connected && entry.n > highestConnectedN)
+
+  if (trailingEmpties.length === 1 && trailingEmpties[0].n === desiredSpareN) {
+    return // Already converged — the common case on every no-op call.
+  }
+
+  // Highest array index first: removeInput() splices `node.inputs` by
+  // POSITION and shifts every later slot's link bookkeeping down by one
+  // (LGraphNode.ts:1726-1746), so removing several in one pass low-to-high
+  // would invalidate the remaining queued indices.
+  const removeIdxs = trailingEmpties.map((entry) => entry.idx).sort((a, b) => b - a)
+  for (const idx of removeIdxs) node.removeInput(idx)
+
+  addVideoInput(node, desiredSpareN, entries[0].input)
+}
+
+/**
+ * Chains *node*'s `configure` and `onConnectionsChange` so its `video_N`
+ * sockets converge per convergeVideoInputs() above. Called once from
+ * attachSaveUi(), PremiereSaveTimeline only.
+ *
+ * Two chained hooks, not one:
+ *
+ * - `onConnectionsChange` reacts to LIVE connect/disconnect (dragging a
+ *   link on/off a `video_N` slot) — the ordinary case.
+ * - `configure` (LGraphNode.ts's own restore path — used for a workflow
+ *   load, undo/redo, AND copy/paste; all three route through this one
+ *   method) is chained separately because its restore loop
+ *   (LGraphNode.ts:882-893) calls `onConnectionsChange` once per restored
+ *   input slot with `isConnected` hardcoded `true` — literally
+ *   `this.onConnectionsChange?.(NodeSlotType.INPUT, i, true, link, input)`
+ *   — even for a slot whose own `input.link` is null (i.e. it lied about
+ *   being connected). Worse, it does this while still iterating
+ *   `this.inputs.entries()` LIVE off the very array `removeInput()` would
+ *   need to splice, so reacting mid-loop risks corrupting the in-flight
+ *   restore, not just misreading it.
+ *
+ *   `state.restoring` blanks onConnectionsChange's reaction for exactly
+ *   the duration of the ORIGINAL configure() call, and a single
+ *   convergeVideoInputs() pass runs in `finally`, once `this.inputs` is
+ *   completely stable. Same guard shape core's own `PrimitiveNode` uses
+ *   around `app.configuringGraph` (`widgetInputs.ts`'s
+ *   `onConnectionsChange`, `if (app.configuringGraph) return`) — scoped to
+ *   this one node's own `configure()` instead of the whole graph's
+ *   load, so copy/paste and undo/redo converge too, not only a fresh
+ *   workflow load, and without this file needing to import `app` at all.
+ * @param {object} node
+ */
+function wireVideoInputGrowth(node) {
+  const state = { restoring: false }
+
+  const originalConfigure = node.configure
+  node.configure = function (...args) {
+    state.restoring = true
+    try {
+      return originalConfigure.apply(this, args)
+    } finally {
+      state.restoring = false
+      try {
+        convergeVideoInputs(this)
+      } catch (error) {
+        api.warn('convergeVideoInputs (post-configure) failed', error)
+      }
+    }
+  }
+
+  const originalOnConnectionsChange = node.onConnectionsChange
+  node.onConnectionsChange = function (type, index, isConnected, linkInfo, inputOrOutput) {
+    let result
+    if (typeof originalOnConnectionsChange === 'function') {
+      result = originalOnConnectionsChange.apply(this, arguments)
+    }
+    // Outputs are never named video_N (PremiereSaveTimeline's only output
+    // is `timeline_path`), and onConnectionsChange always fires on the
+    // node whose OWN slot changed (LGraphNode.ts's call sites invoke it as
+    // `this.onConnectionsChange?.(...)` / `target.onConnectionsChange?.(...)`
+    // — always the node that owns the slot) — so matching *this node's*
+    // slot by name discriminates input-side video_N changes without this
+    // file needing the NodeSlotType enum (LGraphNode.ts:623-630) at all.
+    if (!state.restoring && VIDEO_INPUT_RE.test(inputOrOutput?.name || '')) {
+      try {
+        convergeVideoInputs(this)
+      } catch (error) {
+        api.warn('convergeVideoInputs (onConnectionsChange) failed', error)
+      }
+    }
+    return result
+  }
+
+  // A brand-new node already satisfies the invariant via its class-def
+  // default `video_1` socket — a no-op here, cheap insurance against a
+  // future INPUT_TYPES default change.
+  convergeVideoInputs(node)
+}
+
+// ---------------------------------------------------------------------------
 // PremiereSaveTimeline: Open output folder
 // ---------------------------------------------------------------------------
 
 function attachSaveUi(node) {
+  // Independent of the file bar below (and wired first, ahead of its
+  // sequence_name-widget guard) — PROTOCOL.md §7.3 "Growing video inputs"
+  // is its own concern from the Browse…/Open-folder bar, so a future bar
+  // regression can never take socket growth down with it, and vice versa.
+  try {
+    wireVideoInputGrowth(node)
+  } catch (error) {
+    api.warn('wireVideoInputGrowth failed', error)
+  }
+
   const sequenceNameWidget = findWidget(node, 'sequence_name')
   if (!sequenceNameWidget) {
     api.warn('PremiereSaveTimeline node is missing its sequence_name widget; file bar not attached')

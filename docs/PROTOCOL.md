@@ -332,6 +332,23 @@ versions (mismatch = pulled-but-not-restarted; cpsb pattern), plus:
   that folder — the natural next step after a run (go import it into
   Premiere). Before the first run the folder may not exist yet: the button
   says so rather than erroring. Hidden when not local, same as above.
+  Save deliberately has NO `Browse…` (it WRITES to a deterministic
+  `output/premiere_timelines/<sequence_name>/` — there is no input file to
+  pick) and its reveal button reads "Open output folder", not "Open
+  folder". This asymmetry with Load is intentional (owner asked 2026-07-19
+  why they differ) — not a bug.
+- **Growing video inputs on Save Premiere Timeline** (owner report
+  2026-07-19: "I can only connect one video; a new connection replaces the
+  previous"). The backend already accepts unbounded `video_N` (§3.1); the
+  frontend must GROW the visible sockets so more than one can be wired:
+  on `onConnectionsChange` (input side), after the last `video_N` slot gets
+  a connection, add a fresh empty `video_(N+1)` input; when trailing empty
+  `video_N` slots pile up beyond one, remove the extras so there's always
+  exactly one spare — the rgthree / core image-batch pattern. Must survive
+  workflow save/reload (rebuild the right number of slots from the restored
+  connections) and never renumber a CONNECTED slot (a connected `video_2`
+  keeps its name/link). Verify against the frontend build ComfyUI 0.28.1
+  actually ships, not just the dev rig's.
 - Node class ids and widget names are untouched by all of this: the
   buttons are frontend affordances over the SAME `file_path` /
   `sequence_name` widgets, so API-driven and remote use are unaffected.

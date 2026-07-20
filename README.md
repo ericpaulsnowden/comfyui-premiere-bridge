@@ -28,16 +28,18 @@ floor that always works, and it never depends on the panel.
 
 ## Save Premiere Timeline (shipped; Premiere import verified — SPIKES S1 passed 2026-07-19)
 
-Wire up to four VIDEO inputs and/or paste absolute file paths (one per
-line), pick a sequence rate (23.976–60, drop-frame aware), and the node
-writes everything under
+Wire in as many VIDEO inputs as you like (a new `video_N` socket appears
+each time you connect the last one — like the image-batch nodes) and/or
+paste absolute file paths (one per line), pick a sequence rate (23.976–60,
+drop-frame aware), and the node writes everything under
 `output/premiere_timelines/<sequence name>/`:
 
 - `<name>.xml` — an FCP7 XML timeline with your clips back-to-back on V1,
   referencing media by absolute path so a same-machine `File > Import` in
   Premiere links without a relink dialog.
 - `media/` — connected VIDEO inputs are materialized here (mp4); `paths`
-  entries are referenced **in place**, never copied or re-encoded.
+  entries are referenced **in place** (default) or copied in, per the
+  `media` widget (*Link in place* vs *Collect into folder*).
 - `<name>.edl` (optional) — CMX3600 fallback with `* SOURCE FILE:` path
   comments.
 - `<name>.otio` (optional) — written when `opentimelineio` is installed;
