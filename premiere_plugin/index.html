@@ -2,48 +2,45 @@
 <html>
 <head>
   <style>
+    /* Fill the panel and never let the BODY itself overflow — the log is the
+       one scroll region. Fixes the v0.8.0 report: the fixed-height log +
+       unconstrained body pushed results off-screen with nothing scrollable,
+       and content didn't reflow so the panel felt unresizable. Now the header
+       + controls sit at a fixed top and the log flex-fills whatever height is
+       left, at any panel size (manifest allows 260x300 .. 2000x2000). */
+    html, body { height: 100%; margin: 0; }
+    *, *::before, *::after { box-sizing: border-box; }
     body {
-      margin: 0;
       padding: 10px;
+      display: flex;
+      flex-direction: column;
       font-family: system-ui, sans-serif;
       font-size: 12px;
       color: #e6e6e6;
       background: transparent;
+      overflow: hidden;
     }
-    h1 { font-size: 13px; margin: 0 0 2px; }
-    .sub { color: #999; margin: 0 0 10px; font-size: 11px; }
+    .head, .controls { flex: none; }
+    .sub { color: #999; margin: 4px 0 10px; font-size: 11px; }
     .row { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    button {
-      font-size: 11px;
-      padding: 4px 9px;
-      background: #333;
-      color: #e6e6e6;
-      border: 1px solid #555;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    button:hover { background: #3d3d3d; }
-    input[type="text"] {
-      font-size: 11px;
-      padding: 3px 6px;
-      background: #262626;
-      color: #e6e6e6;
-      border: 1px solid #555;
-      border-radius: 4px;
-      flex: 1;
-      min-width: 90px;
-    }
+    /* Let the text field take the rest of its row and wrap when the panel is
+       narrow (rather than forcing the row wider than the panel). */
+    .row sp-textfield { flex: 1 1 120px; min-width: 120px; }
     .hint { color: #888; font-size: 10px; margin: 1px 0 6px; }
     #log {
+      flex: 1 1 auto;
+      min-height: 60px;
       margin-top: 10px;
       background: #1a1a1a;
       border: 1px solid #444;
       border-radius: 4px;
       padding: 6px;
-      height: 220px;
       overflow-y: auto;
+      overflow-x: hidden;
       white-space: pre-wrap;
-      word-break: break-all;
+      /* Long paths / JSON wrap instead of overflowing horizontally, but at
+         word/any boundary (break-all chopped mid-word and was hard to read). */
+      overflow-wrap: anywhere;
       font-family: monospace;
       font-size: 10px;
       line-height: 1.5;
@@ -53,25 +50,34 @@
   </style>
 </head>
 <body>
-  <h1>ComfyUI &harr; Premiere &mdash; Tier-2 spike round (M0)</h1>
-  <p class="sub">v0.8.0 &middot; each button answers one roadmap unknown; results append to the log below.</p>
-
-  <div class="row">
-    <button id="spike-a">A: ws:// connect</button>
-    <input type="text" id="ws-target" value="localhost:8188" title="host:port of a running ComfyUI">
+  <div class="head">
+    <sp-heading size="XS">ComfyUI &harr; Premiere &mdash; Tier-2 spike round (M0)</sp-heading>
+    <p class="sub">v0.8.1 &middot; each button answers one roadmap unknown; results append to the log below (it scrolls &mdash; drag the panel edge to grow it).</p>
   </div>
-  <p class="hint">THE gate: opens ws://&lt;target&gt;/ws (ComfyUI's own websocket). Proves/refutes cleartext ws on this OS.</p>
 
-  <div class="row">
-    <button id="spike-b">B: create bin (lockedAccess)</button>
-    <button id="spike-c">C: import + find</button>
-    <input type="text" id="import-path" placeholder="/absolute/path/to/a.png" title="file to import for spike C">
-  </div>
-  <div class="row">
-    <button id="spike-d">D: frame-export probe</button>
-    <button id="spike-e">E: API probes</button>
-    <button id="copy-log">Copy results</button>
-    <button id="clear-log">Clear</button>
+  <div class="controls">
+    <div class="row">
+      <sp-button id="spike-a" variant="secondary">A: ws:// connect</sp-button>
+      <sp-textfield id="ws-target" value="localhost:8188" title="host:port of a running ComfyUI"></sp-textfield>
+    </div>
+    <p class="hint">THE gate: opens ws://&lt;target&gt;/ws (ComfyUI's own websocket). Proves/refutes cleartext ws on this OS.</p>
+
+    <div class="row">
+      <sp-button id="spike-b" variant="secondary">B: create bin</sp-button>
+      <sp-button id="spike-c" variant="secondary">C: import + find</sp-button>
+    </div>
+    <div class="row">
+      <sp-textfield id="import-path" placeholder="/absolute/path/to/a.png" title="file to import for spike C"></sp-textfield>
+    </div>
+
+    <div class="row">
+      <sp-button id="spike-d" variant="secondary">D: frame-export probe</sp-button>
+      <sp-button id="spike-e" variant="secondary">E: API probes</sp-button>
+    </div>
+    <div class="row">
+      <sp-button id="copy-log" variant="primary">Copy results</sp-button>
+      <sp-button id="clear-log" variant="secondary">Clear</sp-button>
+    </div>
   </div>
 
   <div id="log"></div>
