@@ -80,6 +80,21 @@ file-by-id references, nested/compound clips (excluded rather than leaked),
 generator clips without media, and the `-1` boundaries Premiere writes
 around transitions.
 
+## Tier-2 UXP panel (in progress — spike round shipped)
+
+A panel that runs **inside Premiere** and talks to ComfyUI live — no
+File ▸ Import/Export step — is in development (roadmap:
+`research/roadmap-premiere-tier2.md` in the planning repo; spike
+definitions in [docs/SPIKES.md](docs/SPIKES.md) §S6). What ships today is
+the **M0 spike panel** at [`premiere_plugin/`](premiere_plugin/): five
+buttons that answer the roadmap's gating unknowns (cleartext `ws://` to a
+local ComfyUI, the 26.3-safe action pattern, import+find, the frame-export
+surface, API ground truth) with a copyable log. Dev-install it via Adobe's
+**UXP Developer Tool**: Add Plugin → pick `premiere_plugin/manifest.json` →
+Load (Premiere ≥ 25.6 with Developer Mode enabled). The XML nodes above
+remain the fully supported, panel-free path — the panel will only ever be
+the *better* version of flows that already work without it.
+
 ## Install
 
 ```bash

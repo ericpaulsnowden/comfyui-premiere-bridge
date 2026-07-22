@@ -1,0 +1,61 @@
+{
+  "id": "com.epsnowden.comfyui-premiere-bridge",
+  "name": "ComfyUI for Premiere",
+  "shortname": "comfyui-pr",
+  "version": "0.8.0",
+  "main": "index.html",
+  "host": {
+    "app": "premierepro",
+    "minVersion": "25.6.0"
+  },
+  "manifestVersion": 5,
+  "requiredPermissions": {
+    "localFileSystem": "request",
+    "clipboard": "readAndWrite",
+    "network": {
+      "domains": [
+        "ws://localhost:8188",
+        "http://localhost:8188",
+        "ws://localhost:8199",
+        "http://localhost:8199"
+      ]
+    }
+  },
+  "entrypoints": [
+    {
+      "id": "comfyuiPanel",
+      "type": "panel",
+      "minimumSize": { "width": 260, "height": 300 },
+      "maximumSize": { "width": 2000, "height": 2000 },
+      "preferredDockedSize": { "width": 320, "height": 520 },
+      "preferredFloatingSize": { "width": 360, "height": 560 },
+      "label": { "default": "ComfyUI (spike round)" },
+      "icons": [
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/dark.svg",
+          "scale": [1, 2],
+          "theme": ["darkest", "dark", "medium"]
+        },
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/light.svg",
+          "scale": [1, 2],
+          "theme": ["lightest", "light"]
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 48,
+      "height": 48,
+      "path": "icons/plugin-icon.svg",
+      "scale": [1, 2],
+      "theme": ["darkest", "dark", "medium", "lightest", "light", "all"],
+      "species": ["pluginList"]
+    }
+  ]
+}
