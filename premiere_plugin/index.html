@@ -1,45 +1,51 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
   <style>
-    /* Fill the panel and never let the BODY itself overflow — the log is the
-       one scroll region. Fixes the v0.8.0 report: the fixed-height log +
-       unconstrained body pushed results off-screen with nothing scrollable,
-       and content didn't reflow so the panel felt unresizable. Now the header
-       + controls sit at a fixed top and the log flex-fills whatever height is
-       left, at any panel size (manifest allows 260x300 .. 2000x2000). */
-    html, body { height: 100%; margin: 0; }
+    /* UXP panel layout, take 3 (v0.8.2) — copied from the ONE pattern proven
+       in real UXP on the owner's own machines: the Photoshop plugin's
+       panel.html (comfyui-photoshop-bridge/photoshop_plugin), whose panel +
+       scrolling handoff list work in production. Its shape:
+         html, body { height: 100%; }
+         .panel     { height: 100%; overflow-y: auto; }   <- THE scroll region
+         log-ish box{ max-height: NNNpx; overflow-y: auto; }
+       No absolute-fill wrapper, no flex-fill height math — v0.8.1 tried a
+       flex column + body overflow:hidden and the owner still couldn't scroll;
+       take 2 tried the forum's absolute-fill and the local check showed how
+       easily that collapses when %-height/viewport metrics don't resolve.
+       This take keeps ALL content reachable by scrolling #root itself, and
+       gives the log its own capped scroll box. layout.js adds a live W x H
+       readout + a JS height pin as a last-resort belt. */
+    html, body { margin: 0; padding: 0; height: 100%; }
     *, *::before, *::after { box-sizing: border-box; }
-    body {
+    #root {
+      height: 100%;
+      overflow-y: auto;      /* the panel's ONE main scroll region */
+      overflow-x: hidden;
       padding: 10px;
-      display: flex;
-      flex-direction: column;
       font-family: system-ui, sans-serif;
-      font-size: 12px;
-      color: #e6e6e6;
+      font-size: var(--uxp-host-font-size, 12px);
+      color: var(--uxp-host-text-color, #e6e6e6);
       background: transparent;
-      overflow: hidden;
     }
-    .head, .controls { flex: none; }
-    .sub { color: #999; margin: 4px 0 10px; font-size: 11px; }
+    .sub { color: var(--uxp-host-text-color-secondary, #999); margin: 4px 0 10px; font-size: 11px; }
+    #dims { color: #6fa8dc; }
     .row { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    /* Let the text field take the rest of its row and wrap when the panel is
-       narrow (rather than forcing the row wider than the panel). */
     .row sp-textfield { flex: 1 1 120px; min-width: 120px; }
-    .hint { color: #888; font-size: 10px; margin: 1px 0 6px; }
+    .hint { color: var(--uxp-host-text-color-secondary, #888); font-size: 10px; margin: 1px 0 6px; }
     #log {
-      flex: 1 1 auto;
-      min-height: 60px;
       margin-top: 10px;
       background: #1a1a1a;
       border: 1px solid #444;
       border-radius: 4px;
       padding: 6px;
+      min-height: 120px;
+      max-height: 340px;     /* the Photoshop plugin's capped-log idiom */
       overflow-y: auto;
       overflow-x: hidden;
       white-space: pre-wrap;
-      /* Long paths / JSON wrap instead of overflowing horizontally, but at
-         word/any boundary (break-all chopped mid-word and was hard to read). */
+      word-break: break-all;
       overflow-wrap: anywhere;
       font-family: monospace;
       font-size: 10px;
@@ -50,12 +56,10 @@
   </style>
 </head>
 <body>
-  <div class="head">
+  <div id="root">
     <sp-heading size="XS">ComfyUI &harr; Premiere &mdash; Tier-2 spike round (M0)</sp-heading>
-    <p class="sub">v0.8.1 &middot; each button answers one roadmap unknown; results append to the log below (it scrolls &mdash; drag the panel edge to grow it).</p>
-  </div>
+    <p class="sub">v0.8.2 &middot; panel <span id="dims">?x?</span> &middot; results append to the log (log and panel both scroll). If this line doesn't say v0.8.2, the reload didn't take &mdash; UDT &#8942; &rsaquo; Reload, or restart Premiere.</p>
 
-  <div class="controls">
     <div class="row">
       <sp-button id="spike-a" variant="secondary">A: ws:// connect</sp-button>
       <sp-textfield id="ws-target" value="localhost:8188" title="host:port of a running ComfyUI"></sp-textfield>
@@ -78,9 +82,10 @@
       <sp-button id="copy-log" variant="primary">Copy results</sp-button>
       <sp-button id="clear-log" variant="secondary">Clear</sp-button>
     </div>
-  </div>
 
-  <div id="log"></div>
+    <div id="log"></div>
+  </div>
   <script src="main.js"></script>
+  <script src="layout.js"></script>
 </body>
 </html>
