@@ -11,6 +11,7 @@ fake ones over ``tmp_path``. Same pattern as comfyui-photoshop-bridge's
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,10 +75,22 @@ class BridgeContext:
             ``output_dir`` widget (§3.2) can redirect the base; see
             :meth:`resolve_timeline_dir`.
         input_dir: ComfyUI's input directory (upload-relative reads).
+        send_event: The frontend-event emitter (``PromptServer.instance.
+            send_sync`` in a real run -- thread-safe, so any thread may call
+            it; same precedent as comfyui-photoshop-bridge's identically-
+            shaped ``CpsbContext.send_event``). PROTOCOL.md §10.4: added now
+            so the websocket layer can relay the plugin's ``export_ready``
+            message to the browser as a ``cprb.export_ready`` event for M2's
+            frontend listener; M1's own node never calls it. Optional, and
+            defaults to ``None`` (tests and any pre-existing bare
+            ``BridgeContext(output_dir, input_dir)`` construction keep
+            working untouched) -- callers must treat ``None`` as "no
+            frontend to notify", never an error.
     """
 
     output_dir: Path
     input_dir: Path
+    send_event: Callable[[str, dict], None] | None = None
 
     def resolve_timeline_dir(self, sequence_name: str, output_dir: str = "") -> Path:
         """``<base>/<sanitized name>/`` — computed, NOT created.

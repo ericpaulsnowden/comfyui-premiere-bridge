@@ -9,7 +9,7 @@ as `PROTOCOL.md §N`.
 Contents: §1 scope & tiers · §2 output conventions · §3 Save Premiere
 Timeline · §4 emitted FCP7 XML (xmeml) · §5 emitted EDL · §6 Load Premiere
 Timeline & Get Shot · §7 routes & frontend · §8 versioning & stability ·
-§9 spikes.
+§9 spikes · §10 Tier 2 plugin websocket.
 
 ---
 
@@ -23,9 +23,11 @@ Adobe-side plugin is a better version, never the only version):
   out via existing savers; cprb adds ONLY what the ecosystem lacks — writing
   a Premiere-importable timeline, and reading a Premiere-exported one.
   The user's gestures are Premiere's own `File > Import` / `File > Export`.
-- **Tier 2 (future §, not yet specified):** a Premiere UXP panel (websocket
-  client of ComfyUI's server, sibling of the Photoshop plugin). Gated on
-  the SPIKES.md live-Premiere spikes. Nothing in Tier 1 may depend on it.
+- **Tier 2 (§10, shipping with M1):** a Premiere UXP panel (websocket
+  client of ComfyUI's server, sibling of the Photoshop plugin). Was gated
+  on the SPIKES.md live-Premiere spikes; the S6 round (2026-07-23, owner's
+  PC) proved every unknown M1 depends on. Nothing in Tier 1 may depend
+  on it.
 
 ## §2 Output conventions
 
@@ -52,6 +54,11 @@ a folder of the user's choosing; see that section):
   `media/` files behind (harmless; documented v1 behavior).
 - All timeline files reference media by ABSOLUTE path (§4.3) — same-machine
   or shared-drive import links without relinking.
+
+Tier 2's `PremiereSendResult` (§10.5) writes under a SIBLING tree,
+`<comfy output>/premiere_results/`, with the OPPOSITE naming rule —
+collision-free names, never overwrite — because every push is a NEW import
+into Premiere, not a re-import of the same timeline. Full rules in §10.5.
 
 ## §3 `PremiereSaveTimeline` (display: "Save Premiere Timeline")
 
@@ -331,6 +338,7 @@ the nodes changes. Same rule and rationale as EPSNodes' FORMAT.md §2.
 | `GET /cprb/fs/list?dir=&ext=` | **loopback-only** (`FS_LIST_LOCAL_ONLY=True`). Conforms to the cross-pack **`../../STANDARD-fs-browse.md`** contract (shared with cpsb + epsnodes; v0.5.1). Empty/missing `dir` ⇒ `output_dir`. `dir="ROOTS"` ⇒ the labeled top level: **"ComfyUI Output"** + **"Home"** + platform tail (Windows drives `C:\`/`D:\`/`U:\`…, or macOS `/Volumes/*`). `ext` = a comma-separated allowlist (default `.xml`; case-insensitive). → `{"dir", "parent" (abs / "ROOTS" / null), "sep", "dirs":[{name}], "files":[{name,size,mtime}], "truncated"}` — **names-only** entries (client joins with `dir`+`sep`; ROOTS entries also carry an absolute `path`), case-insensitively sorted, dotfiles + stat-failures skipped, 500-entry cap ⇒ `truncated:true`. A directory at a drive root reports `parent:"ROOTS"` so the picker can climb to the top level (the 2026-07-19 "stuck at top of C:\" fix); a UNC path lists normally, its share root `parent:null`; non-absolute `dir` (other than `ROOTS`) ⇒ 400; unreadable ⇒ 400 |
 | `POST /cprb/open_folder` `{"path"}` | **loopback-only.** Reveals *path* in the OS file manager ON THE SERVER MACHINE (Explorer/Finder): a file reveals its parent folder, a directory reveals itself. Missing ⇒ 404; spawn failure ⇒ 500; `{"ok": true}` |
 | `GET /cprb/timeline_dir?sequence_name=&output_dir=` | `{"dir": <abs>, "exists": bool}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name`. `output_dir` (2026-07-20, §3.2) is optional and mirrors the node's own widget of the same name — passing it resolves the SAME effective folder `PremiereSaveTimeline` would write to with that override; omitted/blank behaves exactly as before it existed. Never 400s on a non-absolute `output_dir` — it is silently treated as blank (the node is the one that surfaces the "rejected" warning; this route only ever mirrors what the node would actually do) |
+| `GET /cprb/ws` | websocket upgrade — the Tier 2 plugin connection. Not JSON-in/JSON-out like the rows above; the full message contract lives in §10 |
 
 **§7.3 Frontend.** `web/cprb.js`: one
 `app.registerExtension('cprb.PremiereBridge')` with the About-panel badge
@@ -400,3 +408,132 @@ versions (mismatch = pulled-but-not-restarted; cpsb pattern), plus:
 - S5: linked-audio clipitems (v1.1 feature, needs S1 first).
 - S6: Premiere UXP panel — plain `ws://` permission + EncoderManager range
   semantics (Tier 2 gate; mirrors the cpsb spike discipline).
+
+## §10 Tier 2 — plugin websocket (M1)
+
+The Premiere UXP panel (`premiere_plugin/`) is a websocket client of
+ComfyUI's own server, sibling of comfyui-photoshop-bridge's plugin, proven
+by the SPIKES.md S6 round (plain `ws://localhost` from inside Premiere
+26.3: PASS, 2026-07-23, owner's PC). M1's contract is deliberately
+minimal: the plugin connects and handshakes, and the server pushes
+finished results for it to import ("ComfyUI results land in a Premiere
+bin"). Everything else — frame export, progress, keepalive — is M2+.
+
+### §10.1 Route & single-plugin slot
+
+| Route | → |
+|---|---|
+| `GET /cprb/ws` | websocket upgrade (also mirrored under `/api/`, like every §7 route) |
+
+- ONE plugin connection at a time. A second connection supersedes the
+  first: the server closes the old socket with code **4000** / message
+  `replaced by a new connection` (cpsb's exact convention — the plugin
+  treats 4000 as "another panel took over" and does not auto-reconnect),
+  then installs the new one. A superseded socket's late cleanup never
+  clears its replacement's slot.
+- Disconnect clears the slot; there is no session state to resume — a
+  reconnecting plugin simply re-handshakes from `hello`.
+- **SAME-MACHINE-ONLY (M1).** Contrast cpsb's REMOTE mode: `pr_result`
+  carries HOST-filesystem paths the plugin reads/imports directly, and the
+  message says nothing about transporting bytes — a plugin on another
+  machine is out of scope for M1 (the primary deployment is the owner's
+  PC, running both ComfyUI and Premiere; a cross-machine mode, if ever, is
+  a later § the way cpsb grew one). The route is not loopback-ENFORCED in
+  M1 — enforcement is a noted hardening item alongside §10.2's keepalive —
+  but nothing works cross-machine because the paths don't.
+
+### §10.2 Handshake (plugin → server unless marked)
+
+| Message | Fields | Server behavior |
+|---|---|---|
+| `hello` | `plugin_version` | records it; replies **`hello_ack`** (server → plugin) carrying `server_version` (= `cprb/version.py`) |
+| `ready` | — | marks the connection READY; only a ready connection receives §10.3 pushes |
+| `pong` | — | accepted and ignored: M1 sends no pings (a server-side keepalive/staleness loop is a noted future hardening item — cpsb runs one), but accepting `pong` now means adding it later needs no plugin change |
+| anything else | — | logged at debug and ignored — never a disconnect (§8's additive-only stability rule applies to this surface too) |
+
+Non-JSON frames are logged and ignored. The server never disconnects a
+plugin over a bad message; version skew must stay pairable.
+
+### §10.3 `pr_result` (server → plugin)
+
+Sent by `PremiereSendResult` (§10.5) through `cprb.routes.push_result`,
+once per resolved file:
+
+| Field | Meaning |
+|---|---|
+| `type` | `"pr_result"` |
+| `path` | ABSOLUTE host-filesystem path of the media to import (§10.1 posture) |
+| `label` | clip name for the imported item; empty = keep the filename |
+| `bin_name` | project-panel bin to import into (plugin creates it if missing; node default `ComfyUI Results`) |
+| `color_label` | ALWAYS present; `""` until a later node version adds the widget — the plugin skips absent/EMPTY values |
+| `insert_at_playhead` | ALWAYS present; `false` until a later node version adds the widget — same skip-when-unset rule |
+| `sent_ts` | server Unix time the push was sent (float seconds) |
+
+Delivery contract: `push_result` is called on ComfyUI's prompt WORKER
+thread and is bounded — the cross-thread send onto the server's event loop
+has **5 s** to complete (and is refused outright if the caller somehow IS
+the event-loop thread, where waiting would deadlock), else it cancels
+best-effort, logs, and returns `False`. A push therefore never blocks the
+prompt queue and never raises into a running workflow: `False` (no plugin,
+not ready, timeout, dead socket) surfaces only as the node's
+"import manually" summary line. There is no application-level ack in M1 —
+delivery to the socket is the contract; import success/failure lives in
+the plugin's own panel log.
+
+### §10.4 `export_ready` (plugin → server — M2's inbound half)
+
+Accepted now because it is cheap and additive: the message's payload
+(every field except `type`) is logged and — when the running context has a
+frontend emitter — relayed VERBATIM as a `cprb.export_ready` frontend
+event (`PromptServer.send_sync`; `BridgeContext.send_event`). The
+CONSUMING frontend listener ships with M2, which also fixes this message's
+field schema; nothing in M1 sends or depends on it.
+
+### §10.5 `PremiereSendResult` (display: "Send to Premiere")
+
+Inputs (ALL optional — `required` is empty):
+
+- `video` (VIDEO) and/or `image` (IMAGE) — at least one must be wired
+  (else a clear error); both wired = both pushed in one run, video first.
+- `label` (STRING, default `""`) — §10.3's `label`, and the stem of any
+  file this node writes (`cprb.context.sanitize_name`, empty → `result`).
+- `bin_name` (STRING, default `"ComfyUI Results"`).
+- Later versions add `color_label` / `insert_at_playhead` widgets — §10.3
+  already carries both fields, so they arrive with no protocol change.
+
+Resolution rules (the §2-amending `premiere_results/` conventions):
+
+- Everything this node WRITES lands under
+  `<comfy output>/premiere_results/` as
+  `<sanitized label>_<YYYYMMDD-HHMMSS>[_N]<ext>` — COLLISION-FREE, never
+  deterministic-overwrite. Opposite rule from §2's overwrite-in-place
+  timelines, deliberately: a re-imported timeline should replace itself,
+  but every push here is a NEW import, and overwriting would silently
+  swap media already cut into a Premiere project.
+- VIDEO with an existing, untrimmed source file (ComfyUI core's
+  `get_stream_source()` naming a real path):
+  - outside ComfyUI's temp dir → LINKED IN PLACE: the source path is
+    pushed as-is, zero copy — multi-GB results are instant;
+  - inside the temp dir → byte-COPIED into `premiere_results/` first
+    (original extension kept; a copy never re-encodes), because Premiere
+    links media in place and a temp file cleaned up later goes offline in
+    the project.
+- VIDEO that is in-memory, TRIMMED (an active trim window means the source
+  file on disk is not the video the graph wired), or otherwise unlinkable
+  → written to `premiere_results/` as mp4 via the object's own `save_to`
+  (§3.3's shared mechanism). Audio survives on every branch — link and
+  copy never touch the bytes, and core's `save_to` carries audio streams —
+  so `*-audio.mp4` I2V results keep their soundtrack. A `video` input with
+  no usable `save_to` is a clear error naming the input.
+- IMAGE → first frame written as PNG. A batched IMAGE (N>1) writes the
+  FIRST frame and says so in the summary (list-mode fan-outs, §6.4,
+  already run this node once per item).
+
+Outputs: `written_path` (STRING — the video's resolved path when both
+inputs are wired, else the single result's; for a linked-in-place video
+this is the ORIGINAL source path, the one Premiere imports) plus a UI text
+summary: per file, `Sent to Premiere: <path>` or `Plugin not connected —
+import manually: <path>`, with any notes (temp-copy, trim, batched image)
+indented beneath. No plugin connected is NOT an error — §1's ethos:
+ComfyUI-only must work; the plugin is a better version, never the only
+version. `OUTPUT_NODE = True`; no `IS_CHANGED` override.

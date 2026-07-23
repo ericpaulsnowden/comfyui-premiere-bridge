@@ -1,4 +1,4 @@
-"""HTTP routes (PROTOCOL.md §7).
+"""HTTP routes (PROTOCOL.md §7) + the Tier 2 plugin websocket (PROTOCOL.md §10).
 
 Tier 1's routes are all in service of the frontend's file affordances: the
 version/config rows the panel reads, a server-filesystem browser feeding the
@@ -11,18 +11,31 @@ browser on another machine can still type paths and run the nodes, it just
 can't browse or reveal folders on the host. Handlers close over the injected
 :class:`~cprb.context.BridgeContext`, so tests build an
 ``aiohttp.web.Application`` from :func:`build_routes` directly — no ComfyUI.
+
+Tier 2 (§10) adds ``GET /cprb/ws`` — the Premiere UXP panel's websocket,
+sibling of comfyui-photoshop-bridge's ``/cpsb/ws`` — plus
+:func:`push_result`, the worker-thread-safe entry point
+``PremiereSendResult`` uses to hand a finished file to the connected plugin.
+One plugin at a time (:data:`_connection`); a new connection supersedes the
+old with close code 4000, exactly like cpsb.
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import ipaddress
+import json
 import logging
 import os
 import string
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
+import aiohttp
 from aiohttp import web
 
 from .context import BridgeContext
@@ -256,6 +269,186 @@ def _parse_extensions(raw: str) -> tuple[str, ...]:
     return cleaned or DEFAULT_EXTENSIONS
 
 
+# ------------------------------------------------ Tier 2: plugin websocket (§10)
+#
+# The Premiere UXP panel connects to `GET /cprb/ws` (spike-proven: SPIKES.md
+# S6-A, plain ws:// to localhost from inside Premiere 26.3 on the PC). M1's
+# surface is deliberately minimal — hello/hello_ack/ready, then server-pushed
+# `pr_result` messages — a subset of cpsb's proven `/cpsb/ws` design, minus
+# what cprb doesn't need yet (no keepalive loop, no chunked uploads, no
+# local_mode: PROTOCOL.md §10.1 is SAME-MACHINE-ONLY, so there is no remote
+# posture to negotiate).
+
+#: Bound on waiting for a `pr_result` push to be scheduled and sent on
+#: ComfyUI's event loop (PROTOCOL.md §10.3). `push_result` is called from the
+#: prompt worker thread mid-`execute`; a wedged plugin connection or a loop
+#: that stops pumping now fails this ONE push (the node falls back to its
+#: "import manually" summary line) instead of hanging `prompt_worker` — and
+#: therefore ComfyUI's entire prompt queue, which processes one item at a
+#: time — forever. Same rationale as cpsb's `_TIER2_SEND_TIMEOUT_SECONDS`.
+_PUSH_SEND_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass
+class PluginConnection:
+    """State for the single active Premiere plugin websocket (PROTOCOL.md §10.1)."""
+
+    ws: web.WebSocketResponse
+    ready: bool = False
+    plugin_version: str | None = None
+
+
+#: The single plugin slot (§10.1: one Premiere panel per server; a second
+#: connection supersedes the first). Module-level, like every other piece of
+#: cprb state that must be reachable from BOTH the aiohttp handlers and the
+#: nodes' worker-thread calls; tests reset it between cases.
+_connection: PluginConnection | None = None
+
+#: ComfyUI's own running event loop (`PromptServer.instance.loop`), captured
+#: by :func:`register` so :func:`push_result` can reach the loop-bound
+#: websocket from the prompt worker thread. `None` outside ComfyUI; tests
+#: that exercise `push_result` install their own running loop here.
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _running_on_push_loop(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether THIS thread is already inside *loop*'s own run loop.
+
+    Not the same question as "is any loop running on this thread": the
+    actual hazard is identity — ``run_coroutine_threadsafe(..., loop)
+    .result()`` only deadlocks if this thread is the one already driving
+    *loop* itself (scheduling work onto a loop, then blocking the very
+    thread that must run it). Current ComfyUI executes nodes on a worker
+    thread, never the loop's own (verified in cpsb, whose
+    ``_running_on_state_loop`` this ports); but that is a fact about one
+    host's execution model, not a guarantee, so :func:`push_result` checks
+    rather than assumes.
+    """
+    try:
+        return asyncio.get_running_loop() is loop
+    except RuntimeError:
+        return False
+
+
+async def _handle_plugin_message(
+    context: BridgeContext, connection: PluginConnection, raw: str
+) -> None:
+    """Dispatch one inbound plugin frame (PROTOCOL.md §10.2 / §10.4).
+
+    Same tolerant posture as cpsb's `_handle_plugin_message`: a non-JSON
+    frame or an unknown ``type`` is logged and ignored, never a reason to
+    drop the connection — the plugin and server must stay pairable across
+    version skew (§8's additive-only rule applies to this surface too).
+    """
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("cprb: plugin sent a non-JSON frame, ignoring")
+        return
+    msg_type = msg.get("type") if isinstance(msg, dict) else None
+
+    if msg_type == "hello":
+        connection.plugin_version = msg.get("plugin_version")
+        await connection.ws.send_json({"type": "hello_ack", "server_version": __version__})
+    elif msg_type == "ready":
+        connection.ready = True
+        logger.info(
+            "cprb: plugin ready (plugin_version=%s)", connection.plugin_version
+        )
+    elif msg_type == "pong":
+        # Accepted so a future keepalive loop (§10.2's noted hardening item)
+        # slots in without a plugin-side change; M1 sends no pings.
+        pass
+    elif msg_type == "export_ready":
+        # §10.4: M2's inbound half, accepted now because it's cheap and the
+        # message schema is the plugin's to start emitting. Relayed to the
+        # frontend verbatim minus `type`; the consuming listener ships with
+        # M2, so today this is log-visible only.
+        payload = {key: value for key, value in msg.items() if key != "type"}
+        logger.info("cprb: plugin export_ready: %s", payload)
+        if context.send_event is not None:
+            context.send_event("cprb.export_ready", payload)
+    else:
+        logger.debug("cprb: ignoring unknown plugin message type: %r", msg_type)
+
+
+def push_result(
+    *,
+    path: str,
+    label: str,
+    bin_name: str,
+    color_label: str = "",
+    insert_at_playhead: bool = False,
+) -> bool:
+    """Send one `pr_result` message to the connected plugin (PROTOCOL.md §10.3).
+
+    Called by ``PremiereSendResult.execute`` on ComfyUI's prompt worker
+    thread; the plugin websocket lives on ComfyUI's event loop
+    (:data:`_loop`), so the send crosses threads via
+    ``asyncio.run_coroutine_threadsafe``, bounded to
+    :data:`_PUSH_SEND_TIMEOUT_SECONDS` — cpsb's `_send_tier2_open` pattern.
+
+    Every §10.3 field is always present in the message — ``color_label``/
+    ``insert_at_playhead`` stay ``""``/``False`` until later node versions
+    add their widgets; the plugin skips absent/empty ones — so the plugin
+    never needs per-field feature detection.
+
+    Returns:
+        ``True`` when the message was handed to the socket within the
+        bound. ``False`` — NEVER an exception; the caller's fallback is a
+        human "import manually" summary line, not error handling — when no
+        plugin is connected/ready, no loop is available, the send timed
+        out, or the socket failed mid-send.
+    """
+    connection = _connection
+    loop = _loop
+    if connection is None or not connection.ready or loop is None:
+        return False
+    if _running_on_push_loop(loop):
+        # Blocking the loop's own thread on work scheduled onto that same
+        # loop deadlocks for real (see _running_on_push_loop). Refuse — the
+        # node's "import manually" fallback is strictly better than a hang.
+        logger.warning(
+            "cprb: push_result called from ComfyUI's own event-loop thread; "
+            "refusing the cross-thread wait (it would deadlock) — import manually"
+        )
+        return False
+
+    message = {
+        "type": "pr_result",
+        "path": path,
+        "label": label,
+        "bin_name": bin_name,
+        "color_label": color_label,
+        "insert_at_playhead": insert_at_playhead,
+        "sent_ts": time.time(),
+    }
+    future: concurrent.futures.Future[None] | None = None
+    try:
+        future = asyncio.run_coroutine_threadsafe(connection.ws.send_json(message), loop)
+        future.result(timeout=_PUSH_SEND_TIMEOUT_SECONDS)
+    except (concurrent.futures.TimeoutError, RuntimeError) as exc:
+        if future is not None:
+            future.cancel()  # Best-effort; harmless if already done/failed.
+        # str(exc), not exc: a retained record (pytest caplog, log
+        # aggregators) holding the exception would pin its traceback — and
+        # through it the abandoned send_json coroutine — long past this call.
+        logger.error(
+            "cprb: pr_result push for %s did not send within %.0fs (%s) — import manually",
+            path,
+            _PUSH_SEND_TIMEOUT_SECONDS,
+            str(exc),
+        )
+        return False
+    except Exception:
+        # E.g. ConnectionResetError from a socket that died after `ready`.
+        # push_result NEVER raises into a running workflow (§10.3).
+        logger.exception("cprb: pr_result push for %s failed — import manually", path)
+        return False
+    logger.info("cprb: pushed pr_result for %s (bin %r)", path, bin_name)
+    return True
+
+
 def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
     @routes.get("/cprb/version")
     async def get_version(_request: web.Request) -> web.Response:
@@ -390,6 +583,41 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
             return error_response(500, f"could not open the folder: {exc}")
         return web.json_response({"ok": True})
 
+    @routes.get("/cprb/ws")
+    async def websocket_route(request: web.Request) -> web.WebSocketResponse:
+        """PROTOCOL.md §10.1: the Premiere plugin's websocket.
+
+        One plugin at a time: a new connection closes any previous one with
+        code 4000 ("replaced by a new connection" — the plugin treats 4000
+        as "another panel took over", cpsb's exact supersede convention),
+        then installs itself as :data:`_connection`. On ANY exit the slot is
+        cleared only if it still points at THIS connection — a superseded
+        socket's late cleanup must never clobber its replacement.
+        """
+        global _connection
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        previous = _connection
+        if previous is not None:
+            await previous.ws.close(code=4000, message=b"replaced by a new connection")
+
+        connection = PluginConnection(ws=ws)
+        _connection = connection
+        logger.info("cprb: plugin websocket connected")
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    await _handle_plugin_message(context, connection, msg.data)
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.warning("cprb: plugin websocket error: %s", ws.exception())
+        finally:
+            if _connection is connection:
+                _connection = None
+                logger.info("cprb: plugin websocket disconnected")
+
+        return ws
+
     @routes.get("/cprb/timeline_dir")
     async def get_timeline_dir(request: web.Request) -> web.Response:
         """PROTOCOL.md §7.2/§3.2: ``output_dir``-aware. Passing the SAME
@@ -424,8 +652,15 @@ def register(context: BridgeContext) -> None:
     aiohttp app — because ComfyUI mirrors exactly that table under the
     ``/api`` prefix at startup (server.py: "Prefix every route with /api"),
     and the frontend's `fetchApi` calls `/api/cprb/...`.
+
+    Also captures ComfyUI's own event loop into :data:`_loop` (PROTOCOL.md
+    §10.3): the plugin websocket is bound to that loop, and
+    :func:`push_result` — called from the prompt worker thread — needs it
+    for its ``run_coroutine_threadsafe`` hop.
     """
+    global _loop
     from server import PromptServer  # ComfyUI's module; import only inside ComfyUI
 
     _register_all(context, PromptServer.instance.routes)
+    _loop = PromptServer.instance.loop
     logger.info("cprb: routes registered")
