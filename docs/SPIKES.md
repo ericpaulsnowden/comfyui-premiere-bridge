@@ -46,7 +46,7 @@ calling the XML output "verified" in the README.
   - [x] **S6-B action pattern.** Create a bin inside
     `project.lockedAccess()` + `executeTransaction()` (the 26.3-enforced
     shape) and confirm ONE labeled Edit ▸ Undo step.
-  - [ ] **S6-C import + find.** `importFiles([path])` then recover the new
+  - [x] **S6-C import + find.** `importFiles([path])` then recover the new
     item via `findItemsMatchingMediaPath` — records which calling idiom
     works (docs say instance method; a static call is tried first).
   - [x] **S6-D frame-export probe.** Enumerate the real export surface at
@@ -62,11 +62,13 @@ calling the XML output "verified" in the README.
 
 ## LIVE RESULTS
 
-- **S6 spike round — RUN BY THE OWNER 2026-07-23 (panel v0.8.2, host
-  premierepro 26.3.0, uxp 9.3.0; A/B/D/E answered, C partial).** Machine not
-  identified in the log — the `Z:\` media paths suggest the Windows PC, but
-  Premiere+UDT were first installed on the Mac; v0.8.3's panel logs
-  `os.platform()` at boot and in Spike C, so the next paste settles it.
+- **S6 spike round — COMPLETE. Run by the owner on the WINDOWS PC (panel
+  v0.8.2→v0.8.3, host premierepro 26.3.0, uxp 9.3.0, `os.platform()` =
+  `win32`); A/B/C/D/E all answered.** Machine confirmed by v0.8.3's platform
+  log: `win32` — so the whole round, including the S6-A ws:// PASS, is on the
+  PC (the same machine ComfyUI runs on = the primary deployment; the macOS
+  cleartext question is now moot for M1 and only matters for a future
+  cross-machine mode). Every Tier-2 unknown M1 depends on is proven.
   - **S6-A `ws://` — PASS. Tier 2 is GO.** `ws://localhost:8188/ws` opened
     from inside Premiere under the scoped localhost `network.domains` array,
     received ComfyUI's own status message (full round trip:
@@ -76,20 +78,26 @@ calling the XML output "verified" in the README.
     PC is the primary deployment; cross-machine comes later, as with cpsb.)
   - **S6-B — PASS (second confirmation; first was 2026-07-22).**
     `project.lockedAccess()` + `executeTransaction()` created the bin.
-  - **S6-C — PARTIAL.** `importFiles([path])` returned `true` every time.
-    The STATIC `ClipProjectItem.findItemsMatchingMediaPath` is **not a
-    function** on 26.3 (docs question answered: INSTANCE method only). The
-    instance call ran but matched **0 items** in all three attempts — two of
-    which had Explorer "Copy as path" QUOTES baked into the path, one clean.
-    Unknowns: import may be async (find ran immediately), stored path form
-    may differ (separators/casing), or the path was invalid on the machine
-    that ran it (`Z:\...` on a Mac would no-op). **v0.8.3 refines the spike:**
-    strips wrapping quotes, logs `os.platform()`, enumerates every clip's
-    `getMediaFilePath()` verbatim after import (the ground-truth line),
-    retries find at 0/750/1500/3000ms with a forward-slash variant, and
-    reports PASS-VIA-ENUMERATION when the import is visible but find-by-path
-    can't match — in which case M1 simply enumerates its own bin and
-    find-by-path is not required.
+  - **S6-C — PASS-VIA-ENUMERATION (v0.8.3, 2026-07-23, win32).** The
+    conclusive answer M1 needs: `importFiles(["C:\Users\eric\Documents\
+    ComfyUI\output\krea2_identity_edit_01262_.png"])` returned `true`, and the
+    file was then present in the project by ENUMERATION at its exact stored
+    path (`getMediaFilePath()` == the input). So **the ComfyUI-output →
+    Premiere import round trip WORKS**, which is the whole point.
+    `findItemsMatchingMediaPath` (instance idiom — the static one is not a
+    function on 26.3) still returned **0** across all delays (0/750/1500/
+    3000ms) and both separator variants, even for the clean, quote-stripped,
+    same-machine path. Best theory (untested, and not worth chasing): it is
+    genuinely an INSTANCE method scoped to the clip's own bin, and we called
+    it on `clips[0]` — a pre-existing clip in a different bin than the fresh
+    import — so the search scope never included the new item. Also observed:
+    of 19 enumerated ClipProjectItems, **11 had EMPTY `getMediaFilePath()`**
+    (sequences / non-media / offline items in other bins) — irrelevant to M1,
+    which enumerates only the bin it creates. **DECISION: M1 does NOT use
+    findItemsMatchingMediaPath. It creates its own bin (S6-B), imports into a
+    known context, enumerates that bin's children (proven here), and tags them
+    via `Properties` (S6-E). find-by-path can't block M1.** Quote-stripping
+    (Explorer "Copy as path" wraps in `"`) confirmed working.
   - **S6-D — PROBED.** Module export/encode keys: `AAFExportOptions`,
     `EncoderManager`, `Exporter`. `Sequence` has NO per-frame export method
     (only `getFrameSize`) — the CEP-era `exportFramePNG` does not exist here.
