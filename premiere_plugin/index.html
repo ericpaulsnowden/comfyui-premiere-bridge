@@ -3,20 +3,15 @@
 <head>
   <meta charset="utf-8">
   <style>
-    /* UXP panel layout, take 3 (v0.8.2) — copied from the ONE pattern proven
-       in real UXP on the owner's own machines: the Photoshop plugin's
-       panel.html (comfyui-photoshop-bridge/photoshop_plugin), whose panel +
-       scrolling handoff list work in production. Its shape:
+    /* UXP panel layout -- the ONE pattern proven in real UXP on the owner's
+       own machines (v0.8.2/v0.8.3 spike round, and before that the Photoshop
+       plugin's production panel). Its shape, DO NOT redesign:
          html, body { height: 100%; }
-         .panel     { height: 100%; overflow-y: auto; }   <- THE scroll region
-         log-ish box{ max-height: NNNpx; overflow-y: auto; }
-       No absolute-fill wrapper, no flex-fill height math — v0.8.1 tried a
-       flex column + body overflow:hidden and the owner still couldn't scroll;
-       take 2 tried the forum's absolute-fill and the local check showed how
-       easily that collapses when %-height/viewport metrics don't resolve.
-       This take keeps ALL content reachable by scrolling #root itself, and
-       gives the log its own capped scroll box. layout.js adds a live W x H
-       readout + a JS height pin as a last-resort belt. */
+         #root      { height: 100%; overflow-y: auto; }  <- THE scroll region
+         #log       { max-height: NNNpx; overflow-y: auto; }
+       v0.8.0/v0.8.1 tried flex-fill and absolute-fill wrappers and the owner
+       couldn't scroll either; this shape scrolled. layout.js adds the live
+       W x H readout (#dims) + a JS height pin as a last-resort belt. */
     html, body { margin: 0; padding: 0; height: 100%; }
     *, *::before, *::after { box-sizing: border-box; }
     #root {
@@ -34,6 +29,18 @@
     .row { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     .row sp-textfield { flex: 1 1 120px; min-width: 120px; }
     .hint { color: var(--uxp-host-text-color-secondary, #888); font-size: 10px; margin: 1px 0 6px; }
+    .card { border: 1px solid #444; border-radius: 4px; padding: 2px 8px 6px; margin: 8px 0; }
+    .pill {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 9px;
+      font-size: 10px;
+      line-height: 1.6;
+    }
+    .pill-grey  { background: #555;    color: #ddd; }
+    .pill-green { background: #2e7d32; color: #fff; }
+    .pill-red   { background: #a33;    color: #fff; }
+    #conn-text { font-size: 11px; }
     #log {
       margin-top: 10px;
       background: #1a1a1a;
@@ -53,38 +60,38 @@
     }
     .ok { color: #4caf50; }
     .bad { color: #f66; }
+    .dim { color: #8a8a8a; }
   </style>
 </head>
 <body>
   <div id="root">
-    <sp-heading size="XS">ComfyUI &harr; Premiere &mdash; Tier-2 spike round (M0)</sp-heading>
-    <p class="sub">v0.8.3 &middot; panel <span id="dims">?x?</span> &middot; results append to the log (log and panel both scroll). If this line doesn't say v0.8.3, the reload didn't take &mdash; UDT &#8942; &rsaquo; Reload, or restart Premiere.</p>
+    <sp-heading size="XS">ComfyUI Bridge</sp-heading>
+    <p class="sub">v<span id="plugin-version">?</span> &middot; panel <span id="dims">?x?</span> &middot; M1: results land in a bin</p>
+
+    <div class="card">
+      <div class="row">
+        <span id="conn-pill" class="pill pill-grey">&hellip;</span>
+        <span id="conn-text">starting&hellip;</span>
+      </div>
+      <div class="row">
+        <sp-textfield id="server-base" value="localhost:8188" title="ComfyUI host:port (8188 default; 8199 = dev rig)"></sp-textfield>
+        <sp-button id="connect-btn" variant="primary">Connect</sp-button>
+      </div>
+      <p class="hint" id="conn-detail">ComfyUI host:port &mdash; 8188 default, 8199 dev rig.</p>
+    </div>
 
     <div class="row">
-      <sp-button id="spike-a" variant="secondary">A: ws:// connect</sp-button>
-      <sp-textfield id="ws-target" value="localhost:8188" title="host:port of a running ComfyUI"></sp-textfield>
-    </div>
-    <p class="hint">THE gate: opens ws://&lt;target&gt;/ws (ComfyUI's own websocket). Proves/refutes cleartext ws on this OS.</p>
-
-    <div class="row">
-      <sp-button id="spike-b" variant="secondary">B: create bin</sp-button>
-      <sp-button id="spike-c" variant="secondary">C: import + find</sp-button>
-    </div>
-    <div class="row">
-      <sp-textfield id="import-path" placeholder="/absolute/path/to/a.png" title="file to import for spike C"></sp-textfield>
-    </div>
-
-    <div class="row">
-      <sp-button id="spike-d" variant="secondary">D: frame-export probe</sp-button>
-      <sp-button id="spike-e" variant="secondary">E: API probes</sp-button>
-    </div>
-    <div class="row">
-      <sp-button id="copy-log" variant="primary">Copy results</sp-button>
+      <sp-button id="spike-s7" variant="secondary">S7: frame-export probe</sp-button>
+      <sp-button id="copy-log" variant="secondary">Copy log</sp-button>
       <sp-button id="clear-log" variant="secondary">Clear</sp-button>
     </div>
+    <p class="hint">S7 probes the export API for M2 &mdash; run it with a sequence open, then Copy log and paste it back.</p>
 
     <div id="log"></div>
   </div>
+  <script src="helpers.js"></script>
+  <script src="connection.js"></script>
+  <script src="import_recipe.js"></script>
   <script src="main.js"></script>
   <script src="layout.js"></script>
 </body>

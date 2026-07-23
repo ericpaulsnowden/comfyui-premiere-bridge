@@ -35,10 +35,20 @@ logger = logging.getLogger("cprb")
 
 def _build_context() -> BridgeContext:
     import folder_paths  # ComfyUI's own module; only importable inside ComfyUI
+    from server import PromptServer
+
+    def _send_event(event: str, payload: dict) -> None:
+        # send_sync is thread-safe (call_soon_threadsafe internally), so any
+        # thread may emit frontend events through it -- the same precedent
+        # comfyui-photoshop-bridge's __init__.py cites for its own emitter.
+        # PROTOCOL.md §10.4: today's only sender is the websocket layer
+        # relaying the plugin's `export_ready` as `cprb.export_ready`.
+        PromptServer.instance.send_sync(event, payload)
 
     return BridgeContext(
         output_dir=Path(folder_paths.get_output_directory()),
         input_dir=Path(folder_paths.get_input_directory()),
+        send_event=_send_event,
     )
 
 
@@ -54,6 +64,7 @@ _NODE_SPECS = [
     ("nodes_load", "PremiereGetShot", "Get Shot"),
     ("nodes_load", "PremiereIterateShots", "Iterate Shots"),
     ("nodes_load", "PremiereShotFrame", "Get Shot Frame"),
+    ("nodes_send", "PremiereSendResult", "Send to Premiere"),
 ]
 
 NODE_CLASS_MAPPINGS = {}

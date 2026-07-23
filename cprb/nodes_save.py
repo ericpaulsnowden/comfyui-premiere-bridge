@@ -99,21 +99,49 @@ def set_context(context: BridgeContext) -> None:
     _context = context
 
 
+def materialize_video(video: Any, dest: Path, *, node_name: str, input_name: str) -> None:
+    """Write *video* to *dest* via the VIDEO object's OWN ``save_to``.
+
+    THE pack's one VIDEO-to-file mechanism (PROTOCOL.md §3.3, reused by
+    §10.5's ``PremiereSendResult``): duck-typed and feature-detected (never
+    an ``isinstance`` check against a specific ComfyUI class) so any VIDEO
+    implementation with the right shape works, matching this pack's
+    existing-nodes-first ethos. ComfyUI core's ``save_to`` preserves audio
+    streams (remux or re-encode both carry them), so a materialized result
+    keeps its soundtrack. An object missing a callable ``save_to`` fails
+    with a clear error naming the offending node and input.
+
+    Args:
+        video: Whatever object ComfyUI connected to the input.
+        dest: The exact file to write (parent must already exist; callers
+            own their directory layout).
+        node_name: The calling node's class name, for the error message.
+        input_name: The offending input's name (``video_2``, ``video``),
+            for the error message.
+
+    Raises:
+        TypeError: *video* has no callable ``save_to`` method.
+    """
+    save_to = getattr(video, "save_to", None)
+    if not callable(save_to):
+        raise TypeError(
+            f"{node_name}: {input_name} does not support save_to(...) "
+            f"(got a {type(video).__name__!r} object, not a ComfyUI VIDEO)"
+        )
+    save_to(str(dest))
+
+
 def _materialize_video(video_dir: Path, index: int, video: Any) -> Path:
     """Save *video* (the ``video_{index}`` input) to ``video_dir`` as an mp4.
 
-    PROTOCOL.md §3.3: VIDEO inputs are materialized via the object's OWN
-    ``save_to`` -- duck-typed and feature-detected (never an
-    ``isinstance`` check against a specific ComfyUI class) so any VIDEO
-    implementation with the right shape works, matching this pack's
-    existing-nodes-first ethos. An object missing a callable ``save_to``
-    fails with a clear error naming the offending input.
+    ``PremiereSaveTimeline``'s own wrapper over :func:`materialize_video`
+    (the shared mechanism): adds §3.3's ``media/`` placement and the
+    ``NNN_<name>.mp4`` naming so a written file is traceable back to the
+    socket that produced it.
 
     Args:
         video_dir: The timeline's ``media/`` directory (created if missing).
-        index: The input's 1-based socket number (``video_{index}``) -- used
-            in the destination filename so a written file is traceable back
-            to the socket that produced it.
+        index: The input's 1-based socket number (``video_{index}``).
         video: Whatever object ComfyUI connected to ``video_{index}``.
 
     Returns:
@@ -122,15 +150,11 @@ def _materialize_video(video_dir: Path, index: int, video: Any) -> Path:
     Raises:
         TypeError: *video* has no callable ``save_to`` method.
     """
-    save_to = getattr(video, "save_to", None)
-    if not callable(save_to):
-        raise TypeError(
-            f"PremiereSaveTimeline: video_{index} does not support save_to(...) "
-            f"(got a {type(video).__name__!r} object, not a ComfyUI VIDEO)"
-        )
     video_dir.mkdir(parents=True, exist_ok=True)
     dest = video_dir / f"{index:03d}_{sanitize_name(f'video_{index}')}.mp4"
-    save_to(str(dest))
+    materialize_video(
+        video, dest, node_name="PremiereSaveTimeline", input_name=f"video_{index}"
+    )
     return dest
 
 

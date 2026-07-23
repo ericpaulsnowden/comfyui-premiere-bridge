@@ -1,320 +1,181 @@
 /*
- * M0 spike panel (roadmap-premiere-tier2.md). Buildless plain JS on purpose —
- * same posture as the Photoshop plugin: no bundler, files at plugin ROOT
- * (the cpsb round proved UXP resolves sub-resources against the main doc,
- * so nesting under src/ 404s). Every spike appends structured lines to the
- * in-panel log; "Copy results" hands the whole run back for SPIKES.md.
+ * main.js -- M1 panel controller: header version fill, the connection card
+ * (status pill + server field + Connect), the activity log's Copy/Clear,
+ * and the ONE remaining spike-style button: S7, the frame-export probe that
+ * gates M2. The M0 spike buttons (S6 A-E) are gone -- that round is complete
+ * and recorded in docs/SPIKES.md LIVE RESULTS.
+ *
+ * Load order (index.html): helpers.js -> connection.js -> import_recipe.js
+ * -> main.js -> layout.js. This file only wires the DOM to globals the
+ * earlier scripts define; it defines nothing the others need.
  */
 'use strict';
 
-const logEl = document.getElementById('log');
+/* ------------------------------- header ------------------------------- */
 
-function log(msg, cls) {
-  const line = document.createElement('div');
-  if (cls) line.className = cls;
-  const ts = new Date().toISOString().slice(11, 19);
-  line.textContent = `[${ts}] ${msg}`;
-  logEl.appendChild(line);
-  logEl.scrollTop = logEl.scrollHeight;
-}
-const ok = (m) => log(`OK  ${m}`, 'ok');
-const bad = (m) => log(`ERR ${m}`, 'bad');
-
-function fail(label, error) {
-  bad(`${label}: ${error && error.message ? error.message : error}`);
-}
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** One pair of wrapping quotes off + trim — the owner's first Spike-C runs
- * pasted Explorer "Copy as path" values, whose literal quotes became part of
- * the imported path. Same cleanup rule the EPS Frame Saver's paste path uses. */
-function cleanImportPath(raw) {
-  let path = (raw || '').trim();
-  if (
-    path.length >= 2 &&
-    ((path[0] === '"' && path[path.length - 1] === '"') ||
-      (path[0] === "'" && path[path.length - 1] === "'"))
-  ) {
-    path = path.slice(1, -1).trim();
-  }
-  return path;
-}
-
-/** Separator/case-insensitive path equality — Premiere may store the media
- * path in a different separator or casing than the user typed; if the
- * IMPORTED item is visible but findItemsMatchingMediaPath returns 0, this is
- * how we prove it (and learn the stored form M1 should match against). */
-function samePath(a, b) {
-  const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
-  return norm(a) === norm(b);
-}
-
-/** All ClipProjectItems in the project tree (breadth-first), capped. */
-async function collectClips(pr, project, cap) {
-  const root = await project.getRootItem();
-  const queue = await root.getItems();
-  const clips = [];
-  while (queue.length && clips.length < cap) {
-    const item = queue.shift();
-    const asClip = pr.ClipProjectItem.cast(item);
-    if (asClip) { clips.push(asClip); continue; }
-    const asFolder = pr.FolderItem.cast(item);
-    if (asFolder) queue.push(...(await asFolder.getItems()));
-  }
-  return clips;
-}
-
-function ppro() {
-  // Required lazily inside each spike so a require failure is a logged
-  // result, not a dead panel.
-  return require('premierepro');
-}
-
-/* ---------------- Spike A: cleartext ws:// (THE gate) ---------------- */
-
-document.getElementById('spike-a').addEventListener('click', () => {
-  const target = document.getElementById('ws-target').value.trim();
-  const url = `ws://${target}/ws?clientId=cprb-spike`;
-  log(`SPIKE A: opening ${url} …`);
-  let settled = false;
-  let socket;
+(function fillHeaderVersion() {
+  // The header version comes from the MANIFEST at runtime, so the
+  // orchestrator's central version bumps show up here with no code edit.
+  // VERIFY(spike-S6-followup): uxp.versions.plugin unproven on Premiere UXP
+  // (proven on Photoshop) -- '?' is the harmless fallback.
+  let version = '?';
   try {
-    socket = new WebSocket(url);
+    version = require('uxp').versions.plugin || '?';
+  } catch (_) { /* leave '?' */ }
+  const el = document.getElementById('plugin-version');
+  if (el) el.textContent = version;
+})();
+
+/* --------------------------- connection card -------------------------- */
+
+const cprbServerField = document.getElementById('server-base');
+const cprbConnectBtn = document.getElementById('connect-btn');
+const cprbPillEl = document.getElementById('conn-pill');
+const cprbConnTextEl = document.getElementById('conn-text');
+const cprbConnDetailEl = document.getElementById('conn-detail');
+
+/** Renders one connection-state snapshot into the pill + status texts.
+ * Grey = connecting, green = connected(+ready), red = disconnected. */
+function renderConnectionState(state) {
+  try {
+    let pillClass = 'pill pill-grey';
+    let pillText = 'connecting';
+    let text = `connecting to ${state.serverBase} ...`;
+    if (state.status === 'connected') {
+      pillClass = 'pill pill-green';
+      pillText = 'connected';
+      text = `server ${state.serverVersion || '(unversioned)'} -- results will land in the bin`;
+    } else if (state.status === 'disconnected') {
+      pillClass = 'pill pill-red';
+      pillText = 'disconnected';
+      text = state.lastError || 'not connected';
+      if (state.nextRetryAt) text += ` -- retrying (attempt ${state.attempts + 1})`;
+    }
+    if (cprbPillEl) {
+      cprbPillEl.className = pillClass;
+      cprbPillEl.textContent = pillText;
+    }
+    if (cprbConnTextEl) cprbConnTextEl.textContent = text;
+    if (cprbConnDetailEl) cprbConnDetailEl.textContent = `target ${state.url}`;
+  } catch (_) { /* a render hiccup must never take the panel down */ }
+}
+
+/** Connect button / Enter in the field: normalize + persist the address and
+ * force a fresh connection (also the manual "reconnect now" and the way to
+ * reclaim the server's single panel slot). */
+function cprbConnectFromField() {
+  try {
+    cprbConnection.setServerBase(cprbServerField ? cprbServerField.value : '');
+    // Reflect normalization ("http://localhost:8199/x" -> "localhost:8199").
+    if (cprbServerField) cprbServerField.value = cprbConnection.getServerBase();
   } catch (error) {
-    // A constructor throw is the "permission/scheme rejected" shape (the
-    // cpsb plugin's UXP behaved this way for disallowed origins).
-    fail('SPIKE A constructor threw (permission/scheme rejected?)', error);
-    return;
+    bad(`server address: ${error && error.message ? error.message : error}`);
   }
-  const timer = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    bad('SPIKE A: no open/error after 8s — treat as blocked or server not running');
-    try { socket.close(); } catch (_) { /* already dead */ }
-  }, 8000);
+}
 
-  socket.addEventListener('open', () => {
-    ok('SPIKE A: socket OPEN — cleartext ws:// is permitted from Premiere UXP on this OS');
+if (cprbConnectBtn) cprbConnectBtn.addEventListener('click', cprbConnectFromField);
+if (cprbServerField) {
+  cprbServerField.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') cprbConnectFromField();
   });
-  socket.addEventListener('message', (event) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    const head = String(event.data).slice(0, 120);
-    ok(`SPIKE A: server message received (full round trip): ${head}`);
-    ok('SPIKE A RESULT: PASS');
-    socket.close(1000, 'spike done');
-  });
-  socket.addEventListener('error', () => {
-    // UXP WebSocket error events carry no detail; the close code says more.
-    log('SPIKE A: error event (see close code next)');
-  });
-  socket.addEventListener('close', (event) => {
-    if (settled) { log(`SPIKE A: closed (code ${event.code})`); return; }
-    settled = true;
-    clearTimeout(timer);
-    bad(`SPIKE A RESULT: FAIL — closed before any message (code ${event.code}, reason "${event.reason}")`);
-  });
-});
+}
 
-/* ------------- Spike B: lockedAccess + executeTransaction ------------- */
+/* ------------------- S7: frame-export probe (M2 gate) ------------------ */
+/*
+ * PROBE, not a feature: its job is to produce a log Eric pastes back into
+ * docs/SPIKES.md, not to succeed. S6-D enumerated EncoderManager's methods
+ * and proved Sequence has no per-frame export; what M2 still needs is (a)
+ * pr.Exporter's own surface (S6-D never probed Exporter itself), (b) the
+ * exportSequence/encodeFile/encodeProjectItem arities, and (c) the EXACT
+ * throw text of minimal exportSequence calls -- every throw is DATA.
+ * The `export_ready` wire message stays reserved for M2; nothing here sends
+ * anything to the server.
+ */
 
-document.getElementById('spike-b').addEventListener('click', async () => {
-  log('SPIKE B: create bin via lockedAccess/executeTransaction …');
+document.getElementById('spike-s7').addEventListener('click', async () => {
+  log('S7: frame-export probe (M2 gate) -- every line below, throws included, is spike DATA; Copy log and paste it back.');
   try {
     const pr = ppro();
     const project = await pr.Project.getActiveProject();
-    if (!project) { bad('SPIKE B: no active project — open any project first'); return; }
-    const root = await project.getRootItem();
-    let txnOk = false;
-    project.lockedAccess(() => {
-      txnOk = project.executeTransaction((compound) => {
-        compound.addAction(root.createBinAction('ComfyUI Spike', true));
-      }, 'Create ComfyUI spike bin');
-    });
-    if (txnOk) {
-      ok('SPIKE B RESULT: PASS — bin created; check Edit ▸ Undo shows one "Create ComfyUI spike bin" step');
-    } else {
-      bad('SPIKE B RESULT: executeTransaction returned false');
-    }
-  } catch (error) {
-    fail('SPIKE B RESULT: FAIL', error);
-  }
-});
+    if (!project) { bad('S7: no active project -- open one, then re-run'); return; }
+    const sequence = await project.getActiveSequence();
+    if (!sequence) { bad('S7: no active sequence -- open one, then re-run'); return; }
 
-/* --------------- Spike C: importFiles + find-by-path ----------------- */
-
-document.getElementById('spike-c').addEventListener('click', async () => {
-  /* v0.8.3 refinement. The 2026-07-23 owner run answered the idiom question
-   * (static findItemsMatchingMediaPath is NOT a function on 26.3 — instance
-   * only) but returned 0 matches even though importFiles said true. Three
-   * suspects, and this version distinguishes them in one click:
-   *   1. quoted paths — the field held Explorer "Copy as path" values with
-   *      literal quotes (now stripped);
-   *   2. import is ASYNC — the item may register after importFiles returns
-   *      (now: retry rounds at 0/750/1500/3000ms);
-   *   3. stored-path form — Premiere may store a different separator/casing
-   *      than typed (now: every clip's getMediaFilePath() is LOGGED verbatim
-   *      and compared separator/case-insensitively; forward-slash variant is
-   *      also tried). If the item is visible by enumeration but find still
-   *      says 0, M1 simply enumerates its own bin instead — not a blocker.
-   * Also logs the OS platform: the run's Z:\ paths suggested the Windows PC,
-   * but which machine ran the spikes matters for what Spike A proved. */
-  const rawPath = document.getElementById('import-path').value;
-  const path = cleanImportPath(rawPath);
-  if (!path) { bad('SPIKE C: enter an absolute media file path first'); return; }
-  if (path !== rawPath.trim()) log('SPIKE C: stripped wrapping quotes from the pasted path');
-  let platform = 'unknown';
-  try { platform = require('os').platform(); } catch (_) { /* keep unknown */ }
-  log(`SPIKE C: platform ${platform}; importFiles(["${path}"]) …`);
-  try {
-    const pr = ppro();
-    const project = await pr.Project.getActiveProject();
-    if (!project) { bad('SPIKE C: no active project'); return; }
-    const imported = await project.importFiles([path], true);
-    log(`SPIKE C: importFiles returned ${imported}`);
-
-    // Ground truth first: what does the project ACTUALLY contain, and how
-    // does Premiere store each item's media path? (This is the line that
-    // explains any 0-match result.)
-    const clips = await collectClips(pr, project, 20);
-    log(`SPIKE C: project now holds ${clips.length} clip item(s); stored media paths:`);
-    let enumMatch = null;
-    for (const clip of clips) {
-      let stored = '(getMediaFilePath failed)';
-      try { stored = await clip.getMediaFilePath(); } catch (_) { /* keep placeholder */ }
-      log(`  stored: ${stored}`);
-      if (enumMatch === null && samePath(stored, path)) enumMatch = stored;
-    }
-    if (enumMatch !== null) ok(`SPIKE C: enumeration match — import IS in the project as: ${enumMatch}`);
-
-    if (!clips.length) { bad('SPIKE C RESULT: PARTIAL — importFiles said true but the project holds no clip items (wrong-machine path?)'); return; }
-
-    // find-by-path, instance idiom (static is absent on 26.3 — prior ground
-    // truth), retried across delays and separator variants.
-    const variants = [path];
-    const fwd = path.replace(/\\/g, '/');
-    if (fwd !== path) variants.push(fwd);
-    const delays = [0, 750, 1500, 3000];
-    let found = null;
-    for (const delay of delays) {
-      if (delay) await sleep(delay);
-      for (const variant of variants) {
-        const items = await clips[0].findItemsMatchingMediaPath(variant, false);
-        if (items && items.length) { found = { items, variant, delay }; break; }
-      }
-      if (found) break;
-    }
-
-    if (found) {
-      ok(`SPIKE C RESULT: PASS — ${found.items.length} item(s) matched (variant "${found.variant}", after ${found.delay}ms)`);
-      for (const item of found.items) {
-        const clip = pr.ClipProjectItem.cast(item);
-        if (clip) log(`  match: ${await clip.getMediaFilePath()}`);
-      }
-    } else if (enumMatch !== null) {
-      ok('SPIKE C RESULT: PASS-VIA-ENUMERATION — the import lands and is enumerable, but findItemsMatchingMediaPath never matches this path form (0 across all delays/variants). M1 will enumerate its own bin; find-by-path is not required.');
-    } else {
-      bad('SPIKE C RESULT: PARTIAL — no find match AND no enumerated path equals the input (compare the stored: lines above against what you typed; likely a wrong-machine or not-mounted path).');
-    }
-  } catch (error) {
-    fail('SPIKE C RESULT: FAIL', error);
-  }
-});
-
-/* ----------------- Spike D: frame-export surface probe ---------------- */
-
-document.getElementById('spike-d').addEventListener('click', async () => {
-  log('SPIKE D: probing the frame-export surface (probe first, never guess an API) …');
-  try {
-    const pr = ppro();
-    const exportish = Object.keys(pr).filter((k) => /export|encod/i.test(k)).sort();
-    log(`SPIKE D: module keys matching /export|encod/i: ${JSON.stringify(exportish)}`);
-    const project = await pr.Project.getActiveProject();
-    const sequence = project ? await project.getActiveSequence() : null;
-    if (!sequence) { bad('SPIKE D: no active sequence — open one, then re-run'); return; }
+    // Playhead (PROVEN read, S6-D) -- the still M2 would export.
     const position = await sequence.getPlayerPosition();
-    log(`SPIKE D: playhead ticks=${position && position.ticks !== undefined ? position.ticks : String(position)}`);
-    const proto = Object.getPrototypeOf(sequence);
-    const seqExport = Object.getOwnPropertyNames(proto).filter((k) => /export|frame/i.test(k)).sort();
-    log(`SPIKE D: Sequence methods matching /export|frame/i: ${JSON.stringify(seqExport)}`);
-    if (pr.EncoderManager) {
-      const mgr = await pr.EncoderManager.getManager();
-      const mgrKeys = Object.getOwnPropertyNames(Object.getPrototypeOf(mgr)).sort();
-      log(`SPIKE D: EncoderManager methods: ${JSON.stringify(mgrKeys)}`);
-    } else {
-      log('SPIKE D: no EncoderManager export on the module');
-    }
-    ok('SPIKE D RESULT: PROBED — paste this log into SPIKES.md; M2 wires whichever call the probe surfaced');
-  } catch (error) {
-    fail('SPIKE D RESULT: FAIL', error);
-  }
-});
+    log(`S7: playhead ticks=${position && position.ticks !== undefined ? position.ticks : String(position)}`);
 
-/* --------------------- Spike E: API ground truth ---------------------- */
-
-document.getElementById('spike-e').addEventListener('click', async () => {
-  log('SPIKE E: ground-truth probes (docs are provably incomplete; keys() is the authority) …');
-  try {
-    const uxp = require('uxp');
-    log(`SPIKE E: host ${uxp.host.name} ${uxp.host.version} · uxp ${uxp.versions ? uxp.versions.uxp : '?'}`);
-    const pr = ppro();
-    log(`SPIKE E: premierepro module keys (${Object.keys(pr).length}): ${JSON.stringify(Object.keys(pr).sort())}`);
-
-    // WorkAreaUtils exists in Adobe sample code but has no doc page.
-    if (pr.WorkAreaUtils) {
-      const project = await pr.Project.getActiveProject();
-      const sequence = project ? await project.getActiveSequence() : null;
-      if (sequence) {
-        const inPoint = await pr.WorkAreaUtils.getWorkAreaInPoint(sequence);
-        ok(`SPIKE E: WorkAreaUtils EXISTS; work-area in = ${inPoint && inPoint.seconds !== undefined ? inPoint.seconds : String(inPoint)}`);
+    // (a) Exporter's own static surface -- S6-D never probed Exporter itself.
+    try {
+      if (pr.Exporter) {
+        log(`S7: Exporter own keys: ${JSON.stringify(Object.getOwnPropertyNames(pr.Exporter).sort())}`);
+        if (pr.Exporter.prototype) {
+          log(`S7: Exporter.prototype keys: ${JSON.stringify(Object.getOwnPropertyNames(pr.Exporter.prototype).sort())}`);
+        }
       } else {
-        ok('SPIKE E: WorkAreaUtils EXISTS (no active sequence to query)');
+        log('S7: pr.Exporter is absent on this build');
       }
-    } else {
-      bad('SPIKE E: WorkAreaUtils NOT on the module here');
+    } catch (error) { fail('S7: Exporter probe', error); }
+
+    // Export-shaped Constants -- a preset/type enum would name the missing
+    // exportSequence argument.
+    try {
+      if (pr.Constants) {
+        const keys = Object.keys(pr.Constants).filter((k) => /export|encod|preset|frame/i.test(k)).sort();
+        log(`S7: Constants keys matching /export|encod|preset|frame/i: ${JSON.stringify(keys)}`);
+        for (const key of keys) {
+          try { log(`S7: Constants.${key} = ${JSON.stringify(pr.Constants[key])}`); } catch (_) { /* unserializable */ }
+        }
+      } else {
+        log('S7: pr.Constants is absent on this build');
+      }
+    } catch (error) { fail('S7: Constants probe', error); }
+
+    // (b) EncoderManager arities (methods themselves enumerated in S6-D).
+    if (!pr.EncoderManager) { bad('S7: no EncoderManager on the module'); return; }
+    const manager = await pr.EncoderManager.getManager();
+    for (const name of ['exportSequence', 'encodeFile', 'encodeProjectItem']) {
+      try {
+        const fn = manager[name];
+        log(`S7: manager.${name}: ${typeof fn}${typeof fn === 'function' ? ` (.length=${fn.length})` : ''}`);
+      } catch (error) { fail(`S7: manager.${name}`, error); }
     }
 
-    // Properties on a ClipProjectItem: the r2 research UNKNOWN — if this
-    // works it is our cleanest bridge-bookkeeping store.
-    if (pr.Properties) {
-      const project = await pr.Project.getActiveProject();
-      if (project) {
-        const root = await project.getRootItem();
-        const queue = await root.getItems();
-        let clip = null;
-        while (queue.length && !clip) {
-          const item = queue.shift();
-          const asClip = pr.ClipProjectItem.cast(item);
-          if (asClip) { clip = asClip; break; }
-          const asFolder = pr.FolderItem.cast(item);
-          if (asFolder) queue.push(...(await asFolder.getItems()));
-        }
-        if (clip) {
-          try {
-            const props = await pr.Properties.getProperties(clip);
-            ok(`SPIKE E: Properties.getProperties(ClipProjectItem) WORKS (${props ? 'object returned' : 'null'}) — usable for bridge bookkeeping`);
-          } catch (propErr) {
-            log(`SPIKE E: Properties.getProperties(ClipProjectItem) rejected: ${propErr.message} — sequence-only, as docs implied`);
-          }
-        } else {
-          log('SPIKE E: no clip in project to try Properties on');
-        }
+    // (c) Minimal exportSequence attempts, aiming at a still frame. Stop at
+    // the first call that does NOT throw; otherwise harvest exact messages.
+    let outDir = '';
+    try {
+      const os = require('os');
+      if (typeof os.tmpdir === 'function') outDir = os.tmpdir() || '';
+    } catch (_) { /* no os.tmpdir here */ }
+    const sep = outDir.indexOf('\\') !== -1 ? '\\' : '/';
+    const outPath = outDir ? `${outDir}${sep}cprb_s7_frame.png` : 'cprb_s7_frame.png';
+    log(`S7: attempt output path: ${outPath}`);
+    const attempts = [
+      { name: 'exportSequence(sequence)', run: () => manager.exportSequence(sequence) },
+      { name: 'exportSequence(sequence, outPath)', run: () => manager.exportSequence(sequence, outPath) },
+      { name: 'exportSequence(sequence, outPath, "")', run: () => manager.exportSequence(sequence, outPath, '') }
+    ];
+    for (const attempt of attempts) {
+      try {
+        const result = await attempt.run();
+        ok(`S7: ${attempt.name} RETURNED ${JSON.stringify(result)} -- check whether ${outPath} exists!`);
+        break;
+      } catch (error) {
+        log(`S7: ${attempt.name} threw: ${error && error.message ? error.message : error}`);
       }
-    } else {
-      log('SPIKE E: no Properties export on the module');
     }
-    ok('SPIKE E RESULT: PROBED — copy the full log into SPIKES.md LIVE RESULTS');
+    ok('S7 RESULT: PROBED -- Copy log and paste it back for SPIKES.md.');
   } catch (error) {
-    fail('SPIKE E RESULT: FAIL', error);
+    fail('S7 RESULT: FAIL', error);
   }
 });
 
-/* ------------------------------- misc -------------------------------- */
+/* -------------------------------- misc -------------------------------- */
 
 document.getElementById('copy-log').addEventListener('click', async () => {
-  const text = Array.from(logEl.children).map((n) => n.textContent).join('\n');
+  const logEl = document.getElementById('log');
+  const text = Array.from(logEl ? logEl.children : []).map((n) => n.textContent).join('\n');
   try {
     await navigator.clipboard.writeText(text);
     ok('log copied to clipboard');
@@ -324,7 +185,14 @@ document.getElementById('copy-log').addEventListener('click', async () => {
 });
 
 document.getElementById('clear-log').addEventListener('click', () => {
-  logEl.replaceChildren();
+  const logEl = document.getElementById('log');
+  if (logEl) logEl.replaceChildren();
 });
 
-log('panel loaded — run spikes top to bottom; A is the go/no-go gate.');
+/* ------------------------------- startup ------------------------------ */
+
+if (cprbServerField) cprbServerField.value = cprbConnection.getServerBase();
+cprbConnection.onStateChange = renderConnectionState;
+renderConnectionState(cprbConnection.getState());
+log('ComfyUI Bridge panel loaded -- run a Send-to-Premiere workflow and results land in the bin.');
+cprbConnection.start();

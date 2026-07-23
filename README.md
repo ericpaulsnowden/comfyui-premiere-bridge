@@ -80,20 +80,42 @@ file-by-id references, nested/compound clips (excluded rather than leaked),
 generator clips without media, and the `-1` boundaries Premiere writes
 around transitions.
 
-## Tier-2 UXP panel (in progress — spike round shipped)
+## Send to Premiere (shipped — Tier-2 M1)
 
-A panel that runs **inside Premiere** and talks to ComfyUI live — no
-File ▸ Import/Export step — is in development (roadmap:
-`research/roadmap-premiere-tier2.md` in the planning repo; spike
-definitions in [docs/SPIKES.md](docs/SPIKES.md) §S6). What ships today is
-the **M0 spike panel** at [`premiere_plugin/`](premiere_plugin/): five
-buttons that answer the roadmap's gating unknowns (cleartext `ws://` to a
-local ComfyUI, the 26.3-safe action pattern, import+find, the frame-export
-surface, API ground truth) with a copyable log. Dev-install it via Adobe's
-**UXP Developer Tool**: Add Plugin → pick `premiere_plugin/manifest.json` →
-Load (Premiere ≥ 25.6 with Developer Mode enabled). The XML nodes above
-remain the fully supported, panel-free path — the panel will only ever be
-the *better* version of flows that already work without it.
+`Premiere Bridge → Send to Premiere`: wire a **VIDEO** output (a WAN/I2V
+generation, a VHS combine — audio comes along) and/or an **IMAGE** output
+into it. Every run, the result lands in Premiere's project panel in a
+**"ComfyUI Results" bin** — created the first time, reused forever after —
+with no export step and no File ▸ Import.
+
+- **Videos are the headline.** An existing video file is **linked in
+  place** (no copying multi-GB files around); only in-memory video, trimmed
+  inputs, or files sitting in ComfyUI's temp folder get written out first
+  (into `output/premiere_results/`, collision-free names, audio preserved).
+- **Never blocks, never fails on Premiere's absence:** with no panel
+  connected the node still writes/reports the file path — the summary says
+  exactly what to import manually. The plugin is the better version, never
+  the only version.
+- `label` names the clip (empty keeps the filename); `bin_name` picks the
+  bin. Color labels and an insert-at-playhead toggle arrive as small
+  follow-up versions.
+
+## ComfyUI Bridge panel (shipped — runs inside Premiere)
+
+The UXP panel at [`premiere_plugin/`](premiere_plugin/) is now a real
+status window: a connection pill (it finds ComfyUI at `localhost:8188` by
+itself and reconnects forever), a server field for other ports, and an
+activity log showing each import as it lands. It performs the actual
+Premiere-side work for **Send to Premiere**: find-or-create the bin,
+import, tag, and (when enabled later) drop the clip at your playhead.
+One panel per server — opening a second one takes over cleanly.
+
+Dev-install via Adobe's **UXP Developer Tool**: Add Plugin → pick
+`premiere_plugin/manifest.json` → Load (**Premiere ≥ 26.3** with Developer
+Mode enabled). The panel also carries the **S7 frame-export probe** — the
+one remaining spike, gating M2's "send a frame/clip back to ComfyUI"
+(spike definitions: [docs/SPIKES.md](docs/SPIKES.md)). The XML nodes above
+remain the fully supported, panel-free path.
 
 ## Install
 

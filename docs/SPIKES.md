@@ -59,6 +59,17 @@ calling the XML output "verified" in the README.
   - The old S6(b) question — `EncoderManager.exportSequence(...,
     exportFull=false)` honoring sequence in/out — moves to M2, informed by
     S6-D's probe.
+- [ ] **S7 — frame export (THE M2 gate).** S6-D enumerated
+  `EncoderManager`'s method NAMES and proved `Sequence` has no per-frame
+  export; S7 must produce an actual still frame from the playhead. The M1
+  panel (v0.9.1) carries an **"S7: frame-export probe"** button: with a
+  sequence open it logs `Exporter`'s own key surface (never probed),
+  export-shaped `Constants`, the `exportSequence`/`encodeFile`/
+  `encodeProjectItem` arities, and then ATTEMPTS minimal `exportSequence`
+  calls — every throw's exact message is the spike data. Run it, Copy log,
+  paste back. M2 ("Frame → ComfyUI" / "Clip → ComfyUI") does not start
+  until this records a working export call (or proves none exists, which
+  would reroute M2 through a different mechanism).
 
 ## LIVE RESULTS
 
