@@ -131,7 +131,9 @@ def test_node_class_contract() -> None:
 def test_input_types_required_is_empty_and_everything_is_optional() -> None:
     spec = PremiereSendResult.INPUT_TYPES()
     assert spec["required"] == {}
-    assert set(spec["optional"]) == {"video", "image", "label", "bin_name", "color_label"}
+    assert set(spec["optional"]) == {
+        "video", "image", "label", "bin_name", "color_label", "insert_at_playhead"
+    }
     assert spec["optional"]["video"][0] == "VIDEO"
     assert spec["optional"]["image"][0] == "IMAGE"
     assert spec["optional"]["label"][1]["default"] == ""
@@ -235,6 +237,7 @@ def test_execute_video_with_durable_source_links_in_place(
             "label": "Shot 1",
             "bin_name": "My Bin",
             "color_label": "",
+            "insert_at_playhead": False,
         }
     ]
     assert result["result"][0] == str(source.resolve())
@@ -389,7 +392,7 @@ def test_color_label_widget_is_appended_last_with_none_default() -> None:
     """New widgets are APPENDED (ComfyUI restores saved widget values by
     position — §8's stability rule), and the default is the no-op "None"."""
     optional = PremiereSendResult.INPUT_TYPES()["optional"]
-    assert list(optional)[-1] == "color_label"
+    assert list(optional)[-2:] == ["color_label", "insert_at_playhead"]
     options, spec = optional["color_label"]
     assert spec["default"] == "None"
     assert options[0] == "None"
@@ -408,3 +411,22 @@ def test_color_label_real_color_passes_through(
 ) -> None:
     PremiereSendResult().execute(image=_image_batch(1), label="x", color_label="teal")
     assert pushes[0]["color_label"] == "teal"
+
+
+# --- insert_at_playhead (v0.9.3, PROTOCOL.md §10.3/§10.5) -----------------------
+
+
+def test_insert_at_playhead_defaults_false_on_the_wire(
+    context: BridgeContext, pushes: list[dict]
+) -> None:
+    PremiereSendResult().execute(image=_image_batch(1), label="x")
+    assert pushes[0]["insert_at_playhead"] is False
+
+
+def test_insert_at_playhead_true_passes_through(
+    context: BridgeContext, pushes: list[dict]
+) -> None:
+    PremiereSendResult().execute(
+        image=_image_batch(1), label="x", insert_at_playhead=True
+    )
+    assert pushes[0]["insert_at_playhead"] is True

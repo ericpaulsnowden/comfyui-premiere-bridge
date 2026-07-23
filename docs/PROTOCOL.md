@@ -503,8 +503,13 @@ Inputs (ALL optional — `required` is empty):
   skip value; there is no "None" member in Premiere's label enum) or one of
   the 15 label-color names + `yellow`, passed through verbatim for the
   plugin's Constants-enum/name-map lookup.
-- `insert_at_playhead` widget lands in a later version — §10.3 already
-  carries the field, so it arrives with no protocol change.
+- `insert_at_playhead` (BOOLEAN, since v0.9.3, appended after
+  `color_label`): OFF by default — results only land in the bin. On, the
+  plugin also overwrites the clip onto the ACTIVE sequence at the playhead
+  on the track above (one labeled undo step; skipped with a logged line
+  when no sequence is open or the track count is unreadable — it never
+  guesses a track). The Premiere-side action is VERIFY-flagged pending the
+  owner's live run.
 
 Resolution rules (the §2-amending `premiere_results/` conventions):
 

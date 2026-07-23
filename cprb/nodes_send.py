@@ -351,6 +351,21 @@ class PremiereSendResult:
                         ),
                     },
                 ),
+                # Appended after color_label (same position rule as above).
+                # OFF by default — the highest-blast-radius step in M1: it
+                # touches the user's actual sequence. One labeled undo step
+                # on the Premiere side when it runs.
+                "insert_at_playhead": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": (
+                            "Also drop the imported clip onto the active sequence "
+                            "at the playhead, on the track above (one undo step). "
+                            "Off = the result only lands in the bin."
+                        ),
+                    },
+                ),
             },
         }
 
@@ -361,6 +376,7 @@ class PremiereSendResult:
         label: str = "",
         bin_name: str = DEFAULT_BIN_NAME,
         color_label: str = COLOR_LABEL_NONE,
+        insert_at_playhead: bool = False,
     ) -> dict[str, Any]:
         if _context is None:
             raise RuntimeError(
@@ -388,7 +404,11 @@ class PremiereSendResult:
             # monkeypatching `cprb.routes.push_result` intercept this path
             # too -- cpsb's exact convention for its launch seam.
             pushed = routes.push_result(
-                path=str(path), label=label, bin_name=bin_name, color_label=wire_color
+                path=str(path),
+                label=label,
+                bin_name=bin_name,
+                color_label=wire_color,
+                insert_at_playhead=bool(insert_at_playhead),
             )
             if pushed:
                 lines.append(f"Sent to Premiere: {path}")
