@@ -35,7 +35,7 @@ calling the XML output "verified" in the README.
   roadmap: `research/roadmap-premiere-tier2.md` M0). The spike panel SHIPS
   in this repo — `premiere_plugin/` (v0.8.0), dev-installed via UXP
   Developer Tool — with one button per spike and a copyable log:
-  - [ ] **S6-A `ws://` cleartext (THE go/no-go gate).** Open
+  - [x] **S6-A `ws://` cleartext (THE go/no-go gate).** Open
     `ws://localhost:<port>/ws` (ComfyUI's own websocket) from inside
     Premiere under the scoped `network.domains` localhost array. Research
     raised the prior AGAINST this on macOS (a live Adobe bug report shows
@@ -43,16 +43,16 @@ calling the XML output "verified" in the README.
     while InDesign passes) — so a PASS on macOS is strong evidence, and
     the PC (Windows) should be at least as permissive. FAIL fallback:
     `wss://` self-signed or an https relay, per the roadmap.
-  - [ ] **S6-B action pattern.** Create a bin inside
+  - [x] **S6-B action pattern.** Create a bin inside
     `project.lockedAccess()` + `executeTransaction()` (the 26.3-enforced
     shape) and confirm ONE labeled Edit ▸ Undo step.
   - [ ] **S6-C import + find.** `importFiles([path])` then recover the new
     item via `findItemsMatchingMediaPath` — records which calling idiom
     works (docs say instance method; a static call is tried first).
-  - [ ] **S6-D frame-export probe.** Enumerate the real export surface at
+  - [x] **S6-D frame-export probe.** Enumerate the real export surface at
     the playhead (module keys, Sequence methods, EncoderManager methods) —
     M2 wires whichever call this surfaces.
-  - [ ] **S6-E ground truth.** `Object.keys(require("premierepro"))` (docs
+  - [x] **S6-E ground truth.** `Object.keys(require("premierepro"))` (docs
     are provably incomplete), `WorkAreaUtils` presence, and whether
     `Properties.getProperties()` accepts a `ClipProjectItem` (if yes: our
     cleanest bridge-bookkeeping store).
@@ -61,6 +61,75 @@ calling the XML output "verified" in the README.
     S6-D's probe.
 
 ## LIVE RESULTS
+
+- **S6 spike round — RUN BY THE OWNER 2026-07-23 (panel v0.8.2, host
+  premierepro 26.3.0, uxp 9.3.0; A/B/D/E answered, C partial).** Machine not
+  identified in the log — the `Z:\` media paths suggest the Windows PC, but
+  Premiere+UDT were first installed on the Mac; v0.8.3's panel logs
+  `os.platform()` at boot and in Spike C, so the next paste settles it.
+  - **S6-A `ws://` — PASS. Tier 2 is GO.** `ws://localhost:8188/ws` opened
+    from inside Premiere under the scoped localhost `network.domains` array,
+    received ComfyUI's own status message (full round trip:
+    `{"type": "status", ...,"sid": "cprb-spike"}`), closed clean (1000).
+    Cleartext ws to localhost is permitted on the OS this ran on. (If this
+    was the PC, the macOS question stays open but low-stakes — same-machine
+    PC is the primary deployment; cross-machine comes later, as with cpsb.)
+  - **S6-B — PASS (second confirmation; first was 2026-07-22).**
+    `project.lockedAccess()` + `executeTransaction()` created the bin.
+  - **S6-C — PARTIAL.** `importFiles([path])` returned `true` every time.
+    The STATIC `ClipProjectItem.findItemsMatchingMediaPath` is **not a
+    function** on 26.3 (docs question answered: INSTANCE method only). The
+    instance call ran but matched **0 items** in all three attempts — two of
+    which had Explorer "Copy as path" QUOTES baked into the path, one clean.
+    Unknowns: import may be async (find ran immediately), stored path form
+    may differ (separators/casing), or the path was invalid on the machine
+    that ran it (`Z:\...` on a Mac would no-op). **v0.8.3 refines the spike:**
+    strips wrapping quotes, logs `os.platform()`, enumerates every clip's
+    `getMediaFilePath()` verbatim after import (the ground-truth line),
+    retries find at 0/750/1500/3000ms with a forward-slash variant, and
+    reports PASS-VIA-ENUMERATION when the import is visible but find-by-path
+    can't match — in which case M1 simply enumerates its own bin and
+    find-by-path is not required.
+  - **S6-D — PROBED.** Module export/encode keys: `AAFExportOptions`,
+    `EncoderManager`, `Exporter`. `Sequence` has NO per-frame export method
+    (only `getFrameSize`) — the CEP-era `exportFramePNG` does not exist here.
+    `EncoderManager` methods: `addEventListener, constructor, dispatchEvent,
+    encodeFile, encodeProjectItem, exportSequence, isAMEInstalled,
+    launchEncoder, removeEventListener, setEmbeddedXMPEnabled,
+    setSidecarXMPEnabled, startBatchEncode, subscribeToEvent`. Playhead read
+    works (`getPlayerPosition().ticks`). **M2 implication:** sequence frames
+    go through `EncoderManager.exportSequence` (range export; also probe
+    `Exporter`'s own keys next), while SOURCE-clip frames need no Premiere
+    export at all — the backend already gets `getMediaFilePath()` and owns
+    PyAV frame extraction (cprb `frame_extract.py`).
+  - **S6-E — PROBED.** `premierepro` module keys (70, verbatim):
+    `AAFExportOptions, Action, AddTransitionOptions, AppPreference,
+    Application, AudioClipTrackItem, AudioComponentChain,
+    AudioFilterComponent, AudioFilterFactory, AudioTrack, C2PAService,
+    CaptionTrack, ClipProjectItem, CloseProjectOptions, Color, Component,
+    ComponentFactory, CompoundAction, Constants, EncoderManager,
+    EventManager, Exporter, FolderItem, FootageInterpretation, FrameRate,
+    Guid, IngestSettings, Keyframe, Marker, Markers, Media, Metadata,
+    ObjectMaskUtils, OpenProjectOptions, OperationCompleteEvent,
+    PRProduction, PointF, PointKeyframe, Project, ProjectClosedEvent,
+    ProjectConverter, ProjectEvent, ProjectItem, ProjectItemSelection,
+    ProjectSettings, ProjectUtils, Properties, RectF, ScratchDiskSettings,
+    Sequence, SequenceEditor, SequenceEvent, SequenceSettings, SequenceUtils,
+    SnapEvent, SourceMonitor, TextSegments, TickTime, TrackItemSelection,
+    Transcript, TransitionFactory, UniqueSerializeable, Utils,
+    VideoClipTrackItem, VideoComponentChain, VideoFilterComponent,
+    VideoFilterFactory, VideoTrack, VideoTransition, eventRoot`.
+    `WorkAreaUtils` is **NOT present** (exists in Adobe sample code, not in
+    26.3's module — never rely on it). **`Properties.getProperties(
+    ClipProjectItem)` WORKS** (object returned) — the bridge-bookkeeping
+    store is confirmed (M1 tags its own imported items with it).
+  - **Panel layout saga resolved:** v0.8.0/v0.8.1 unusable (no scroll, raw
+    controls double-bordered); v0.8.2 mirrored the Photoshop plugin's proven
+    shape (html/body 100% + 100%-height scrolling root + capped scrolling
+    log) — owner checked `t2-panel-loads` and copy/pasted the full log,
+    which is itself the proof. Layout diag: `panel 260x300, sizing: css,
+    resize signal: ResizeObserver`.
+
 
 - **S1 — PASSED (Eric, 2026-07-19).** A `Save Premiere Timeline` `.xml`
   imported into Premiere on the PC (Premiere 26.0): the sequence appeared

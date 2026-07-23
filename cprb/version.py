@@ -5,4 +5,4 @@ Bumped in lockstep with ``pyproject.toml`` and ``web/cprb/version.js`` by
 docs-only changes do NOT bump).
 """
 
-__version__ = "0.8.2"
+__version__ = "0.8.3"

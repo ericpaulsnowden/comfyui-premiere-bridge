@@ -99,9 +99,11 @@
     update();
     let uxpVer = 'n/a';
     try { uxpVer = require('uxp').versions.uxp; } catch (_) { /* not UXP */ }
-    appendLog('layout: v0.8.2 -- panel ' + last.w + 'x' + last.h +
+    let platform = 'unknown';
+    try { platform = require('os').platform(); } catch (_) { /* not UXP */ }
+    appendLog('layout: v0.8.3 -- panel ' + last.w + 'x' + last.h +
       ', sizing: ' + mode + ', resize signal: ' + signal +
-      ' (+750ms poll), uxp ' + uxpVer +
+      ' (+750ms poll), uxp ' + uxpVer + ', platform ' + platform +
       '. Drag a panel divider and watch the W x H in the header: if the ' +
       'numbers never change, the host is not resizing the plugin (dock the ' +
       'panel / restart Premiere) -- report that.');

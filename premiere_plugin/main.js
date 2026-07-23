@@ -24,6 +24,47 @@ function fail(label, error) {
   bad(`${label}: ${error && error.message ? error.message : error}`);
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One pair of wrapping quotes off + trim — the owner's first Spike-C runs
+ * pasted Explorer "Copy as path" values, whose literal quotes became part of
+ * the imported path. Same cleanup rule the EPS Frame Saver's paste path uses. */
+function cleanImportPath(raw) {
+  let path = (raw || '').trim();
+  if (
+    path.length >= 2 &&
+    ((path[0] === '"' && path[path.length - 1] === '"') ||
+      (path[0] === "'" && path[path.length - 1] === "'"))
+  ) {
+    path = path.slice(1, -1).trim();
+  }
+  return path;
+}
+
+/** Separator/case-insensitive path equality — Premiere may store the media
+ * path in a different separator or casing than the user typed; if the
+ * IMPORTED item is visible but findItemsMatchingMediaPath returns 0, this is
+ * how we prove it (and learn the stored form M1 should match against). */
+function samePath(a, b) {
+  const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/** All ClipProjectItems in the project tree (breadth-first), capped. */
+async function collectClips(pr, project, cap) {
+  const root = await project.getRootItem();
+  const queue = await root.getItems();
+  const clips = [];
+  while (queue.length && clips.length < cap) {
+    const item = queue.shift();
+    const asClip = pr.ClipProjectItem.cast(item);
+    if (asClip) { clips.push(asClip); continue; }
+    const asFolder = pr.FolderItem.cast(item);
+    if (asFolder) queue.push(...(await asFolder.getItems()));
+  }
+  return clips;
+}
+
 function ppro() {
   // Required lazily inside each spike so a require failure is a logged
   // result, not a dead panel.
@@ -105,9 +146,28 @@ document.getElementById('spike-b').addEventListener('click', async () => {
 /* --------------- Spike C: importFiles + find-by-path ----------------- */
 
 document.getElementById('spike-c').addEventListener('click', async () => {
-  const path = document.getElementById('import-path').value.trim();
+  /* v0.8.3 refinement. The 2026-07-23 owner run answered the idiom question
+   * (static findItemsMatchingMediaPath is NOT a function on 26.3 — instance
+   * only) but returned 0 matches even though importFiles said true. Three
+   * suspects, and this version distinguishes them in one click:
+   *   1. quoted paths — the field held Explorer "Copy as path" values with
+   *      literal quotes (now stripped);
+   *   2. import is ASYNC — the item may register after importFiles returns
+   *      (now: retry rounds at 0/750/1500/3000ms);
+   *   3. stored-path form — Premiere may store a different separator/casing
+   *      than typed (now: every clip's getMediaFilePath() is LOGGED verbatim
+   *      and compared separator/case-insensitively; forward-slash variant is
+   *      also tried). If the item is visible by enumeration but find still
+   *      says 0, M1 simply enumerates its own bin instead — not a blocker.
+   * Also logs the OS platform: the run's Z:\ paths suggested the Windows PC,
+   * but which machine ran the spikes matters for what Spike A proved. */
+  const rawPath = document.getElementById('import-path').value;
+  const path = cleanImportPath(rawPath);
   if (!path) { bad('SPIKE C: enter an absolute media file path first'); return; }
-  log(`SPIKE C: importFiles(["${path}"]) …`);
+  if (path !== rawPath.trim()) log('SPIKE C: stripped wrapping quotes from the pasted path');
+  let platform = 'unknown';
+  try { platform = require('os').platform(); } catch (_) { /* keep unknown */ }
+  log(`SPIKE C: platform ${platform}; importFiles(["${path}"]) …`);
   try {
     const pr = ppro();
     const project = await pr.Project.getActiveProject();
@@ -115,35 +175,48 @@ document.getElementById('spike-c').addEventListener('click', async () => {
     const imported = await project.importFiles([path], true);
     log(`SPIKE C: importFiles returned ${imported}`);
 
-    // The roadmap's open question: findItemsMatchingMediaPath is documented
-    // as an INSTANCE method, which is odd for a whole-project search. Try
-    // static first, then instance-on-any-clip; report which idiom works.
-    let items = null;
-    let idiom = null;
-    try {
-      items = await pr.ClipProjectItem.findItemsMatchingMediaPath(path, false);
-      idiom = 'STATIC ClipProjectItem.findItemsMatchingMediaPath';
-    } catch (staticErr) {
-      log(`SPIKE C: static idiom failed (${staticErr.message}); trying instance idiom …`);
-      const root = await project.getRootItem();
-      const queue = await root.getItems();
-      let clip = null;
-      while (queue.length && !clip) {
-        const item = queue.shift();
-        const asClip = pr.ClipProjectItem.cast(item);
-        if (asClip) { clip = asClip; break; }
-        const asFolder = pr.FolderItem.cast(item);
-        if (asFolder) queue.push(...(await asFolder.getItems()));
-      }
-      if (!clip) { bad('SPIKE C: no ClipProjectItem in project to try the instance idiom on'); return; }
-      items = await clip.findItemsMatchingMediaPath(path, false);
-      idiom = 'INSTANCE clip.findItemsMatchingMediaPath';
+    // Ground truth first: what does the project ACTUALLY contain, and how
+    // does Premiere store each item's media path? (This is the line that
+    // explains any 0-match result.)
+    const clips = await collectClips(pr, project, 20);
+    log(`SPIKE C: project now holds ${clips.length} clip item(s); stored media paths:`);
+    let enumMatch = null;
+    for (const clip of clips) {
+      let stored = '(getMediaFilePath failed)';
+      try { stored = await clip.getMediaFilePath(); } catch (_) { /* keep placeholder */ }
+      log(`  stored: ${stored}`);
+      if (enumMatch === null && samePath(stored, path)) enumMatch = stored;
     }
-    ok(`SPIKE C: idiom that worked: ${idiom}`);
-    ok(`SPIKE C RESULT: ${items && items.length ? 'PASS' : 'PARTIAL'} — ${items ? items.length : 0} item(s) matched`);
-    for (const item of items || []) {
-      const clip = ppro().ClipProjectItem.cast(item);
-      if (clip) log(`  match: ${await clip.getMediaFilePath()}`);
+    if (enumMatch !== null) ok(`SPIKE C: enumeration match — import IS in the project as: ${enumMatch}`);
+
+    if (!clips.length) { bad('SPIKE C RESULT: PARTIAL — importFiles said true but the project holds no clip items (wrong-machine path?)'); return; }
+
+    // find-by-path, instance idiom (static is absent on 26.3 — prior ground
+    // truth), retried across delays and separator variants.
+    const variants = [path];
+    const fwd = path.replace(/\\/g, '/');
+    if (fwd !== path) variants.push(fwd);
+    const delays = [0, 750, 1500, 3000];
+    let found = null;
+    for (const delay of delays) {
+      if (delay) await sleep(delay);
+      for (const variant of variants) {
+        const items = await clips[0].findItemsMatchingMediaPath(variant, false);
+        if (items && items.length) { found = { items, variant, delay }; break; }
+      }
+      if (found) break;
+    }
+
+    if (found) {
+      ok(`SPIKE C RESULT: PASS — ${found.items.length} item(s) matched (variant "${found.variant}", after ${found.delay}ms)`);
+      for (const item of found.items) {
+        const clip = pr.ClipProjectItem.cast(item);
+        if (clip) log(`  match: ${await clip.getMediaFilePath()}`);
+      }
+    } else if (enumMatch !== null) {
+      ok('SPIKE C RESULT: PASS-VIA-ENUMERATION — the import lands and is enumerable, but findItemsMatchingMediaPath never matches this path form (0 across all delays/variants). M1 will enumerate its own bin; find-by-path is not required.');
+    } else {
+      bad('SPIKE C RESULT: PARTIAL — no find match AND no enumerated path equals the input (compare the stored: lines above against what you typed; likely a wrong-machine or not-mounted path).');
     }
   } catch (error) {
     fail('SPIKE C RESULT: FAIL', error);
