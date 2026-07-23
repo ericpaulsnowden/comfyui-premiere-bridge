@@ -498,8 +498,13 @@ Inputs (ALL optional — `required` is empty):
 - `label` (STRING, default `""`) — §10.3's `label`, and the stem of any
   file this node writes (`cprb.context.sanitize_name`, empty → `result`).
 - `bin_name` (STRING, default `"ComfyUI Results"`).
-- Later versions add `color_label` / `insert_at_playhead` widgets — §10.3
-  already carries both fields, so they arrive with no protocol change.
+- `color_label` (COMBO, since v0.9.2, APPENDED after `bin_name` — widgets
+  are position-restored, §8): `None` default (sent as `""` — the plugin's
+  skip value; there is no "None" member in Premiere's label enum) or one of
+  the 15 label-color names + `yellow`, passed through verbatim for the
+  plugin's Constants-enum/name-map lookup.
+- `insert_at_playhead` widget lands in a later version — §10.3 already
+  carries the field, so it arrives with no protocol change.
 
 Resolution rules (the §2-amending `premiere_results/` conventions):
 

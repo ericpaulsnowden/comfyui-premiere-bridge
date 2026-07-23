@@ -47,6 +47,33 @@ RESULTS_DIRNAME = "premiere_results"
 
 DEFAULT_BIN_NAME = "ComfyUI Results"
 
+#: §10.3/§10.5: the color_label COMBO's options. "None" (the default) means
+#: "don't label" and is sent as "" on the wire (the plugin skips empty —
+#: there IS no "None" member in Premiere's 15-color label enum, so mapping
+#: it to an index would be wrong by construction). The color names mirror
+#: the plugin's own name map (import_recipe.js CPRB_LABEL_COLOR_INDEX),
+#: which itself prefers a live `Constants` enum match when one exists.
+COLOR_LABEL_NONE = "None"
+COLOR_LABEL_OPTIONS = [
+    COLOR_LABEL_NONE,
+    "violet",
+    "iris",
+    "caribbean",
+    "lavender",
+    "cerulean",
+    "forest",
+    "rose",
+    "mango",
+    "purple",
+    "blue",
+    "teal",
+    "magenta",
+    "tan",
+    "green",
+    "brown",
+    "yellow",
+]
+
 _context: BridgeContext | None = None
 
 
@@ -309,6 +336,21 @@ class PremiereSendResult:
                         "tooltip": "The Premiere bin the plugin imports this result into.",
                     },
                 ),
+                # APPENDED after bin_name on purpose: ComfyUI restores saved
+                # widget values BY POSITION, so new widgets must only ever be
+                # added at the END (the §8 stability rule; cpsb learned this
+                # the hard way in its v0.5.21).
+                "color_label": (
+                    COLOR_LABEL_OPTIONS,
+                    {
+                        "default": COLOR_LABEL_NONE,
+                        "tooltip": (
+                            "Premiere label color for the imported clip — makes a "
+                            "run's results visually distinct in the bin. None = "
+                            "leave the clip's label alone."
+                        ),
+                    },
+                ),
             },
         }
 
@@ -318,6 +360,7 @@ class PremiereSendResult:
         image: Any = None,
         label: str = "",
         bin_name: str = DEFAULT_BIN_NAME,
+        color_label: str = COLOR_LABEL_NONE,
     ) -> dict[str, Any]:
         if _context is None:
             raise RuntimeError(
@@ -329,6 +372,10 @@ class PremiereSendResult:
             )
 
         results_dir = _context.output_dir / RESULTS_DIRNAME
+        # §10.3: "None" (the widget default) travels as "" — the plugin's
+        # documented skip-when-empty value; a real color name passes through
+        # for the plugin's Constants-enum/name-map lookup.
+        wire_color = "" if color_label == COLOR_LABEL_NONE else color_label
         lines: list[str] = []
         resolved: list[Path] = []
 
@@ -340,7 +387,9 @@ class PremiereSendResult:
             # Called through the module object (not a from-import) so tests
             # monkeypatching `cprb.routes.push_result` intercept this path
             # too -- cpsb's exact convention for its launch seam.
-            pushed = routes.push_result(path=str(path), label=label, bin_name=bin_name)
+            pushed = routes.push_result(
+                path=str(path), label=label, bin_name=bin_name, color_label=wire_color
+            )
             if pushed:
                 lines.append(f"Sent to Premiere: {path}")
             else:

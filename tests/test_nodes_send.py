@@ -131,7 +131,7 @@ def test_node_class_contract() -> None:
 def test_input_types_required_is_empty_and_everything_is_optional() -> None:
     spec = PremiereSendResult.INPUT_TYPES()
     assert spec["required"] == {}
-    assert set(spec["optional"]) == {"video", "image", "label", "bin_name"}
+    assert set(spec["optional"]) == {"video", "image", "label", "bin_name", "color_label"}
     assert spec["optional"]["video"][0] == "VIDEO"
     assert spec["optional"]["image"][0] == "IMAGE"
     assert spec["optional"]["label"][1]["default"] == ""
@@ -230,7 +230,12 @@ def test_execute_video_with_durable_source_links_in_place(
     result = node.execute(video=video, label="Shot 1", bin_name="My Bin")
 
     assert pushes == [
-        {"path": str(source.resolve()), "label": "Shot 1", "bin_name": "My Bin"}
+        {
+            "path": str(source.resolve()),
+            "label": "Shot 1",
+            "bin_name": "My Bin",
+            "color_label": "",
+        }
     ]
     assert result["result"][0] == str(source.resolve())
     assert video.save_to_calls == []  # zero copy, zero re-encode
@@ -375,3 +380,31 @@ def test_execute_both_inputs_push_both_and_video_path_is_primary(
 
     summary = "\n".join(result["ui"]["text"])
     assert summary.count("Sent to Premiere: ") == 2
+
+
+# --- color_label (v0.9.2, PROTOCOL.md §10.3/§10.5) ------------------------------
+
+
+def test_color_label_widget_is_appended_last_with_none_default() -> None:
+    """New widgets are APPENDED (ComfyUI restores saved widget values by
+    position — §8's stability rule), and the default is the no-op "None"."""
+    optional = PremiereSendResult.INPUT_TYPES()["optional"]
+    assert list(optional)[-1] == "color_label"
+    options, spec = optional["color_label"]
+    assert spec["default"] == "None"
+    assert options[0] == "None"
+    assert "teal" in options and len(options) == 17  # None + Premiere's 15+1 names
+
+
+def test_color_label_none_travels_as_empty_string(
+    context: BridgeContext, pushes: list[dict]
+) -> None:
+    PremiereSendResult().execute(image=_image_batch(1), label="x")
+    assert pushes[0]["color_label"] == ""  # the plugin's documented skip value
+
+
+def test_color_label_real_color_passes_through(
+    context: BridgeContext, pushes: list[dict]
+) -> None:
+    PremiereSendResult().execute(image=_image_batch(1), label="x", color_label="teal")
+    assert pushes[0]["color_label"] == "teal"
