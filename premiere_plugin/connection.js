@@ -9,16 +9,23 @@
  * schedule, same failure taxonomy (constructor throw = the blocking
  * permission shape; close-before-open = server not up; close-after-connected
  * = connection lost), same host:port normalization + localStorage
- * persistence. Dropped on purpose because M1 needs none of it: base64 chunk
- * transfer, ping/pong keepalive, local/remote mode, and cpsb's
- * standby-on-4000. The server still closes an old panel with code 4000
- * ("replaced by a new connection") when a new panel connects, but unlike
- * Photoshop there is no in-progress edit state to protect here, so this
- * client just logs it and reconnects on the normal schedule.
+ * persistence, and -- since the owner's 2026-07-24 parity pass -- the same
+ * STANDBY model: an explicit user Disconnect (or being superseded by another
+ * panel, close code 4000) parks the client with the reconnect loop OFF until
+ * an explicit Connect. The 4000 half also fixes a protocol drift: PROTOCOL.md
+ * §10.1 has always specified "the plugin treats 4000 as 'another panel took
+ * over' and does not auto-reconnect", which the earlier
+ * reconnect-on-schedule behavior here violated. Still dropped on purpose
+ * because M1 needs none of it: base64 chunk transfer, request_file/upload
+ * plumbing, and local/remote mode (pr_result carries same-machine paths).
  *
  * Wire messages (client -> server):
  *   {"type":"hello","plugin_version":"<manifest version>"}  on socket open
  *   {"type":"ready"}                                        after hello_ack
+ *   {"type":"pong"}                                         reply to a server
+ *     ping -- M1's server never pings, but §10.2 already accepts pong, so
+ *     answering costs nothing now and makes the noted keepalive hardening a
+ *     server-only change later (the same additive reasoning, mirrored).
  *   ({"type":"export_ready", ...} is RESERVED for M2's send-back direction
  *    -- nothing here sends it yet; the panel's S7 button only PROBES the
  *    Premiere-side export API that would feed it.)
@@ -48,8 +55,11 @@ const CPRB_BACKOFF_STEPS_MS = [1000, 2000, 5000, 10000];
 const CPRB_WS_OPEN = 1;
 
 /** Application close code the server uses when a NEW panel connection
- * displaces this one (one panel slot per server). Treated as a NORMAL close
- * here -- reconnect on schedule, no cpsb-style standby (see file header). */
+ * displaces this one (one panel slot per server). Receiving it means another
+ * panel took over, so this client STANDS BY instead of auto-reconnecting --
+ * fighting back would kick the other panel off and start an endless
+ * tug-of-war (cpsb field lesson, and PROTOCOL.md §10.1's stated contract).
+ * The user re-claims the slot with the panel's Connect button. */
 const CPRB_WS_CLOSE_REPLACED = 4000;
 
 /**
@@ -94,10 +104,11 @@ function cprbNormalizeServerBase(input) {
 
 /**
  * Reads the persisted server base, falling back to the default.
- * VERIFY(spike-S6-followup): that Premiere UXP's `localStorage` exists AND
- * survives a Premiere restart is unproven (it held on Photoshop UXP for
- * cpsb). Guarded so an absent/broken localStorage just means the panel
- * starts on the default every session -- never a dead panel.
+ * PROVEN on Premiere UXP (owner live session 2026-07-24: the panel came back
+ * with his previously-entered server address, so `localStorage` exists and
+ * survives a restart -- the old VERIFY(spike-S6-followup) is retired). Still
+ * guarded so an absent/broken localStorage just means the panel starts on
+ * the default every session -- never a dead panel.
  */
 function cprbLoadPersistedServerBase() {
   try {
@@ -108,7 +119,7 @@ function cprbLoadPersistedServerBase() {
   return CPRB_DEFAULT_SERVER_BASE;
 }
 
-/** Persists the server base, best-effort (same VERIFY as the loader). */
+/** Persists the server base, best-effort (same PROVEN note as the loader). */
 function cprbPersistServerBase(base) {
   try {
     if (typeof localStorage !== 'undefined') {
@@ -121,9 +132,11 @@ function cprbPersistServerBase(base) {
 
 /**
  * The plugin's manifest version, for the hello message.
- * VERIFY(spike-S6-followup): `uxp.versions.plugin` is proven on Photoshop
- * UXP (cpsb) but unverified on Premiere. Non-load-bearing -- the server only
- * logs it -- so the fallback is a plain "unknown".
+ * PROVEN on Premiere UXP (owner live session 2026-07-24: the panel header
+ * showed the real manifest version, and the layout log line carried
+ * `uxp uxp-9.3.0-local` -- `uxp.versions.*` works here; the old
+ * VERIFY(spike-S6-followup) is retired). Non-load-bearing -- the server only
+ * logs it -- so the fallback stays a plain "unknown".
  */
 function cprbPluginVersion() {
   try {
@@ -138,15 +151,22 @@ function cprbPluginVersion() {
  * shared `cprbConnection` singleton below rather than constructing this.
  *
  * getState() shape:
- *   status        'disconnected' | 'connecting' | 'connected'
- *   ready         true once hello_ack arrived and ready was sent (in this
- *                 client that is exactly status === 'connected')
- *   serverBase    'host:port'
- *   url           'ws://host:port/cprb/ws'
- *   serverVersion string | null (from hello_ack)
- *   lastError     string | null (most recent failure, cleared on connect)
- *   attempts      consecutive failed attempts since the last good handshake
- *   nextRetryAt   epoch ms of the next scheduled attempt, or null
+ *   status            'disconnected' | 'connecting' | 'connected'
+ *   ready             true once hello_ack arrived and ready was sent (in
+ *                     this client that is exactly status === 'connected')
+ *   serverBase        'host:port'
+ *   url               'ws://host:port/cprb/ws'
+ *   serverVersion     string | null (from hello_ack)
+ *   lastError         string | null (most recent failure, cleared on connect)
+ *   lastErrorBlocking whether lastError needs USER action (a permission-
+ *                     shaped constructor throw) vs transient (server not up
+ *                     yet / retrying) -- the panel shouts only the former
+ *   standby           'superseded' | 'manual' | null -- non-null when the
+ *                     client is intentionally idle with the reconnect loop
+ *                     OFF, awaiting an explicit Connect (another panel took
+ *                     the slot, or the user pressed Disconnect)
+ *   attempts          consecutive failed attempts since the last good handshake
+ *   nextRetryAt       epoch ms of the next scheduled attempt, or null
  */
 class CprbConnection {
   constructor() {
@@ -170,6 +190,20 @@ class CprbConnection {
     /** Detail stashed by an `error` event, if the runtime provided any
      * (the close event that always follows carries it into the log). */
     this._socketErrorDetail = null;
+    /** Whether the current lastError is BLOCKING (the user must act -- the
+     * constructor-throw / manifest-permission shape) rather than transient
+     * (just wait; the loop is retrying). Mirrors cpsb: the panel breaks a
+     * blocking error out at the top and keeps transient ones calm. */
+    this._lastErrorBlocking = false;
+    /** Non-null when the client is intentionally NOT connected and NOT
+     * auto-retrying, awaiting an explicit user Connect:
+     *   'superseded' -- the server closed us (code 4000) because another
+     *                   panel took the single plugin slot; reconnecting
+     *                   would kick IT off and loop a two-panel tug-of-war.
+     *   'manual'     -- the user pressed Disconnect.
+     * null means normal auto-connect/auto-retry behavior. Ported from cpsb;
+     * the 'superseded' half is PROTOCOL.md §10.1's stated plugin behavior. */
+    this._standby = null;
   }
 
   /** Starts the manager; only the first call has any effect. */
@@ -178,6 +212,45 @@ class CprbConnection {
     this._started = true;
     log(`connecting to ${this.getWsUrl()} ...`);
     this._open();
+  }
+
+  /**
+   * User-initiated Disconnect (the panel toggle): stop connecting, stop
+   * auto-retrying, tear down any socket, and STAY off until an explicit
+   * {@link connect}. The whole point (owner ask, 2026-07-24): a user who
+   * presses Disconnect must not be reconnected by the retry loop a second
+   * later. Ported from cpsb's ConnectionManager.disconnect().
+   */
+  disconnect() {
+    this._standby = 'manual';
+    this._teardownSocket();
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    this.ready = false;
+    this.attempts = 0;
+    this.nextRetryAt = null;
+    this.lastError = null;
+    this._lastFailureDetail = null;
+    this._lastErrorBlocking = false;
+    this.serverVersion = null;
+    log('disconnected by user -- standing by until Connect');
+    this._setStatus('disconnected');
+  }
+
+  /**
+   * User-initiated Connect / take-over: clears any standby (manual or
+   * superseded) and (re)connects to the current server base, resuming the
+   * auto-retry loop. When another panel currently holds the server's single
+   * plugin slot, this reclaims it -- the server hands the slot to the newest
+   * connector and the other panel stands by instead of fighting back.
+   */
+  connect() {
+    this._standby = null;
+    this._started = true;
+    log(`connecting to ${this.getWsUrl()} ...`);
+    this._reconnectNow();
   }
 
   /** @returns {string} `host:port` -- prefill the panel's server field with this. */
@@ -191,11 +264,13 @@ class CprbConnection {
   }
 
   /**
-   * Points the client at a (possibly different) server and reconnects NOW.
-   * Throws (from the normalizer) on malformed input -- the caller surfaces
-   * the message. An explicit Connect on the UNCHANGED address still forces a
-   * fresh attempt on purpose: it doubles as "reconnect now" (reclaiming the
-   * slot after another panel took it, or skipping a backoff wait).
+   * Points the client at a (possibly different) server and reconnects NOW
+   * (the panel's Advanced "Apply / Connect"). Throws (from the normalizer)
+   * on malformed input -- the caller surfaces the message inline. Applying
+   * the UNCHANGED address still forces a fresh attempt on purpose: it
+   * doubles as "reconnect now" (skipping a backoff wait). While standing by
+   * this is a single attempt -- see {@link _reconnectNow}; the Connect
+   * toggle ({@link connect}) is what resumes the auto-retry loop.
    */
   setServerBase(value) {
     const normalized = cprbNormalizeServerBase(value);
@@ -217,6 +292,8 @@ class CprbConnection {
       url: this.getWsUrl(),
       serverVersion: this.serverVersion,
       lastError: this.lastError,
+      lastErrorBlocking: this._lastErrorBlocking,
+      standby: this._standby,
       attempts: this.attempts,
       nextRetryAt: this.nextRetryAt
     };
@@ -238,7 +315,12 @@ class CprbConnection {
     try { socket.close(); } catch (_) { /* already closing/closed */ }
   }
 
-  /** Clean-slate reconnect against the current server base, immediately. */
+  /** Clean-slate reconnect against the current server base, immediately.
+   * Deliberately does NOT clear `_standby` (cpsb-identical): while standing
+   * by, an Advanced "Apply / Connect" gets exactly ONE attempt -- a success
+   * clears standby in `_completeHandshake`, a failure schedules no retry, so
+   * "Disconnected means disconnected" survives everything except the
+   * explicit Connect button ({@link connect}, which clears standby first). */
   _reconnectNow() {
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
@@ -250,6 +332,7 @@ class CprbConnection {
     this.nextRetryAt = null;
     this.lastError = null;
     this._lastFailureDetail = null;
+    this._lastErrorBlocking = false;
     this._socketErrorDetail = null;
     this.serverVersion = null;
     this._started = true;
@@ -272,6 +355,10 @@ class CprbConnection {
         `WebSocket constructor threw: ${error && error.message ? error.message : error}` +
         ` (is ${this._serverBase} allowed by manifest.json network.domains?)`
       );
+      // The one BLOCKING failure shape: the user must fix the address /
+      // manifest permission -- the panel surfaces this prominently instead
+      // of leaving it to the calm "retrying" line (cpsb's split).
+      this._lastErrorBlocking = true;
       this._scheduleReconnect();
       this._setStatus('disconnected');
       return;
@@ -318,6 +405,13 @@ class CprbConnection {
       this._completeHandshake(msg);
       return;
     }
+    if (msg.type === 'ping') {
+      // M1's server never pings, but PROTOCOL.md §10.2 already accepts
+      // `pong`, so answering now makes the noted keepalive hardening a
+      // server-only change later (cpsb answers pings the same way).
+      this.send({ type: 'pong' });
+      return;
+    }
     if (msg.type === 'pr_result') {
       // The import recipe registers itself as window.cprbHandleResult
       // (import_recipe.js); looked up at MESSAGE time, so script order can
@@ -355,8 +449,20 @@ class CprbConnection {
     this.nextRetryAt = null;
     this.lastError = null;
     this._lastFailureDetail = null;
+    this._lastErrorBlocking = false;
+    // A completed handshake IS a connection -- whatever standby preceded it
+    // (an Apply / Connect while manually disconnected) is over (cpsb rule).
+    this._standby = null;
     this._setStatus('connected');
     ok(`connected -- server ${this.serverVersion || '(unversioned)'} at ${this._serverBase}`);
+    // Plugin and server versions bump in lockstep (scripts/bump_version.py),
+    // so a mismatch means one side is a stale copy -- say so, calmly: it is
+    // an "update when convenient" heads-up, never a refusal (the Advanced
+    // version line carries the same cue in amber; cpsb PROTOCOL §9 posture).
+    const pluginVersion = cprbPluginVersion();
+    if (this.serverVersion && pluginVersion !== 'unknown' && this.serverVersion !== pluginVersion) {
+      log(`version mismatch: plugin v${pluginVersion} vs server v${this.serverVersion} -- update whichever is behind (connection is fine)`);
+    }
   }
 
   _onClose(event) {
@@ -364,6 +470,10 @@ class CprbConnection {
     this._socket = null;
     this.ready = false;
     this.serverVersion = null;
+    // Every close-path failure is transient (server not up / refused /
+    // dropped) -- "just wait, it's retrying". Only the constructor-throw
+    // path in _open is blocking.
+    this._lastErrorBlocking = false;
     const code = event ? event.code : undefined;
     const reason = event ? event.reason : '';
     // Match the server's replace-close by code OR reason text -- insurance
@@ -373,10 +483,18 @@ class CprbConnection {
       code === CPRB_WS_CLOSE_REPLACED ||
       (typeof reason === 'string' && reason.indexOf('replaced by a new connection') !== -1);
     if (replaced) {
-      // NO standby (unlike cpsb): M1 has no in-progress edit state to
-      // protect, so losing the slot is just another reason to reconnect.
-      log('another panel took over -- reconnecting', 'dim');
-    } else if (wasConnected) {
+      // Another panel took the server's single plugin slot. STAND BY instead
+      // of reconnecting (PROTOCOL.md §10.1, cpsb behavior) -- auto-reconnect
+      // here would kick the other panel off and loop a tug-of-war. Not an
+      // error, a state: the panel's standby line explains, and the user
+      // re-claims with Connect.
+      this._standby = 'superseded';
+      this.lastError = null;
+      log('another panel took over -- standing by until Connect', 'dim');
+      this._setStatus('disconnected');
+      return;
+    }
+    if (wasConnected) {
       // An established connection dropped -- not a failed attempt; the
       // attempt counter stays 0 so backoff restarts from the top.
       this.lastError = `connection lost (code ${code}${reason ? `, ${reason}` : ''})`;
@@ -399,7 +517,10 @@ class CprbConnection {
   /**
    * Records one failed attempt. Only a NEW failure message reaches the
    * activity log -- reconnecting forever every 10s must not scroll the log
-   * with identical lines (the attempt count lives in the status line).
+   * with identical lines. (The panel's status area shows the calm
+   * "Waiting for ComfyUI -- retrying in Ns" countdown instead of a raw
+   * attempt count, cpsb wording; `attempts` still drives the backoff step
+   * and stays available in getState().)
    */
   _recordFailure(detail) {
     this.attempts += 1;
@@ -411,6 +532,10 @@ class CprbConnection {
   }
 
   _scheduleReconnect() {
+    // Standing by (user-disconnected, or superseded by another panel) means
+    // NO auto-retry -- only an explicit connect() resumes the loop. This is
+    // the guarantee behind the Disconnect button.
+    if (this._standby) return;
     if (this._reconnectTimer) return;
     const step = Math.min(Math.max(this.attempts - 1, 0), CPRB_BACKOFF_STEPS_MS.length - 1);
     const delay = CPRB_BACKOFF_STEPS_MS[step];

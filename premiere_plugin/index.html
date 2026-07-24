@@ -11,7 +11,17 @@
          #log       { max-height: NNNpx; overflow-y: auto; }
        v0.8.0/v0.8.1 tried flex-fill and absolute-fill wrappers and the owner
        couldn't scroll either; this shape scrolled. layout.js adds the live
-       W x H readout (#dims) + a JS height pin as a last-resort belt. */
+       W x H readout (#dims) + a JS height pin as a last-resort belt.
+
+       Everything INSIDE that skeleton follows the Photoshop plugin's settled
+       panel conventions (cpsb panel.html -- the design standard-bearer):
+       a hidden fatal-error surface first, a status pill with a colored dot,
+       ONE Connect/Disconnect control under it, UPPERCASE section titles over
+       hairline rules, and a JS-driven ADVANCED disclosure (<details> is
+       unsupported in UXP; so is the `hidden` attribute). Every sp-button
+       carries an explicit variant= (cpsb ground truth: sp-button DEFAULTS to
+       variant="cta" when omitted), and at most ONE cta shows per panel
+       state -- Connect, and only while standing by. */
     html, body { margin: 0; padding: 0; height: 100%; }
     *, *::before, *::after { box-sizing: border-box; }
     #root {
@@ -24,25 +34,78 @@
       color: var(--uxp-host-text-color, #e6e6e6);
       background: transparent;
     }
-    .sub { color: var(--uxp-host-text-color-secondary, #999); margin: 4px 0 10px; font-size: 11px; }
-    #dims { color: #6fa8dc; }
+
+    /* --- Fatal-error surface: hidden until a boot failure writes it
+       (helpers.js cprbShowFatal / main.js's guarded boot) --- */
+    #fatal {
+      display: none;
+      color: #e74c3c;
+      white-space: pre-wrap;
+      margin: 0 0 10px;
+      padding: 8px;
+      border: 1px solid #e74c3c;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    /* --- Connection pill (cpsb design: colored dot + bold status word;
+       details live on the lines below, never inside the pill) --- */
+    .status-pill {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      border: 1px solid #444;
+      border-radius: 12px;
+      padding: 5px 12px;
+      margin-bottom: 8px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 4px;
+      margin-right: 8px;
+      background: #808080;   /* neutral grey = standing by (idle, not a fault) */
+    }
+    .dot-connected    { background: #2ecc71; }
+    .dot-connecting   { background: #e6b800; }
+    .dot-disconnected { background: #e74c3c; }
+    .status-text { font-weight: 600; }
+
     .row { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     .row sp-textfield { flex: 1 1 120px; min-width: 120px; }
     .hint { color: var(--uxp-host-text-color-secondary, #888); font-size: 10px; margin: 1px 0 6px; }
-    .card { border: 1px solid #444; border-radius: 4px; padding: 2px 8px 6px; margin: 8px 0; }
-    .pill {
-      display: inline-block;
-      padding: 1px 8px;
-      border-radius: 9px;
-      font-size: 10px;
-      line-height: 1.6;
+    .muted { color: var(--uxp-host-text-color-secondary, #999); font-size: 11px; margin: 2px 0; }
+    .error-line { color: #e74c3c; font-size: 11px; margin: 2px 0; white-space: pre-wrap; }
+
+    /* --- Sections (cpsb: titles written UPPERCASE directly --
+       text-transform is not in UXP's documented CSS property set) --- */
+    .rule { height: 1px; background: #444; margin: 12px 0; }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: var(--uxp-host-text-color-secondary, #999);
+      margin-bottom: 6px;
     }
-    .pill-grey  { background: #555;    color: #ddd; }
-    .pill-green { background: #2e7d32; color: #fff; }
-    .pill-red   { background: #a33;    color: #fff; }
-    #conn-text { font-size: 11px; }
+    #advanced-body .section-title { margin-top: 10px; }
+
+    /* --- Advanced disclosure (JS-driven: <details>/<summary> render as bare
+       divs in UXP and never collapse) --- */
+    .advanced-toggle { display: flex; flex-direction: row; align-items: center; }
+    .advanced-toggle .section-title { margin-bottom: 0; }
+    .caret { margin-right: 6px; font-size: 11px; color: var(--uxp-host-text-color-secondary, #999); }
+    .collapsed { display: none; }
+
+    /* Version line: AMBER on a plugin/server version mismatch -- an
+       informational "update when convenient" heads-up, never red; the pill
+       above is the authority on connection health (cpsb field lesson). */
+    .version-line { font-weight: 700; margin: 6px 0; }
+    .version-mismatch { color: #e6b800; }
+
+    #dims { color: #6fa8dc; }
+
     #log {
-      margin-top: 10px;
+      margin-top: 6px;
       background: #1a1a1a;
       border: 1px solid #444;
       border-radius: 4px;
@@ -65,29 +128,72 @@
 </head>
 <body>
   <div id="root">
-    <sp-heading size="XS">ComfyUI Bridge</sp-heading>
-    <p class="sub">v<span id="plugin-version">?</span> &middot; panel <span id="dims">?x?</span> &middot; M1: results land in a bin</p>
+    <!-- Fatal surface first (cpsb pattern): a top-level throw during boot
+         lands HERE instead of leaving the panel silently bare. -->
+    <div id="fatal"></div>
 
-    <div class="card">
-      <div class="row">
-        <span id="conn-pill" class="pill pill-grey">&hellip;</span>
-        <span id="conn-text">starting&hellip;</span>
-      </div>
-      <div class="row">
-        <sp-textfield id="server-base" value="localhost:8188" title="ComfyUI host:port (8188 default; 8199 = dev rig)"></sp-textfield>
-        <sp-button id="connect-btn" variant="primary">Connect</sp-button>
-      </div>
-      <p class="hint" id="conn-detail">ComfyUI host:port &mdash; 8188 default, 8199 dev rig.</p>
+    <!-- Status pill + the ONE user connection control. main.js flips the
+         button between Disconnect (secondary -- stop the retry loop / stay
+         off) and Connect (cta -- resume), so a user who disconnects is never
+         yanked back online by the auto-reconnect a second later. -->
+    <div class="status-pill">
+      <span id="status-dot" class="dot dot-disconnected"></span>
+      <span id="status-text" class="status-text">Disconnected</span>
     </div>
+    <div class="row">
+      <sp-button id="connect-toggle" variant="secondary">Disconnect</sp-button>
+    </div>
+    <!-- Calm explanation shown while standing by (user-disconnected, or
+         superseded by another panel) -- a state, not a fault. -->
+    <div id="conn-standby" class="muted"></div>
+    <!-- Only a BLOCKING failure (permission-shaped constructor throw) breaks
+         out here in red; transient "server not up yet" stays calm below. -->
+    <div id="conn-error" class="error-line"></div>
+    <div id="conn-retry" class="muted"></div>
 
+    <div class="rule"></div>
+
+    <!-- S7 stays a first-class button while it gates M2 (docs/SPIKES.md). -->
+    <div class="section-title">M2 SPIKE</div>
     <div class="row">
       <sp-button id="spike-s7" variant="secondary">S7: frame-export probe</sp-button>
-      <sp-button id="copy-log" variant="secondary">Copy log</sp-button>
-      <sp-button id="clear-log" variant="secondary">Clear</sp-button>
     </div>
     <p class="hint">S7 probes the export API for M2 &mdash; run it with a sequence open, then Copy log and paste it back.</p>
 
+    <div class="rule"></div>
+
+    <div class="section-title">ACTIVITY</div>
+    <p class="hint">M1 is one-way: run a Send to Premiere workflow in ComfyUI and the result imports into a bin automatically &mdash; watch it land here.</p>
     <div id="log"></div>
+    <div class="row">
+      <sp-button id="copy-log" variant="secondary">Copy log</sp-button>
+      <sp-button id="clear-log" variant="secondary">Clear log</sp-button>
+    </div>
+
+    <div class="rule"></div>
+
+    <!-- Version + server target are diagnostic, not everyday info, so they
+         live behind the disclosure (cpsb's owner-approved arrangement). The
+         version line is still painted the instant main.js runs -- proof
+         fresh code loaded -- it is just tucked in here. -->
+    <div id="advanced-toggle" class="advanced-toggle">
+      <span id="advanced-caret" class="caret">&#9656;</span>
+      <span class="section-title">ADVANCED</span>
+    </div>
+    <div id="advanced-body" class="collapsed">
+      <div id="plugin-version" class="version-line">Plugin loading&hellip;</div>
+      <div class="muted">Panel size <span id="dims">?x?</span> &middot; layout diagnostics print in the log at startup.</div>
+
+      <div class="section-title">COMFYUI SERVER (HOST:PORT)</div>
+      <div class="row">
+        <sp-textfield id="server-base" value="localhost:8188" title="ComfyUI host:port (8188 default; 8199 = dev rig)"></sp-textfield>
+        <sp-button id="server-apply" variant="secondary">Apply / Connect</sp-button>
+      </div>
+      <p class="hint">ComfyUI host:port &mdash; 8188 default, 8199 dev rig. Applying reconnects.</p>
+      <div id="server-error" class="error-line"></div>
+      <div id="server-url" class="muted"></div>
+      <div id="conn-error-detail" class="muted"></div>
+    </div>
   </div>
   <script src="helpers.js"></script>
   <script src="connection.js"></script>

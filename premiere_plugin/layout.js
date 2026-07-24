@@ -1,22 +1,23 @@
 /*
- * Panel-layout diagnostics + sizing fallback (v0.8.2). Owner report on
- * v0.8.0 AND v0.8.1: the panel "can't be resized or scrolled". index.html
- * v0.8.2 mirrors the ONE layout proven in real UXP on the owner's machines
- * (the Photoshop plugin's panel: html/body 100% + a 100%-height #root with
- * overflow-y:auto + a capped scrolling log); this file adds the two things
- * CSS can't:
+ * Panel-layout diagnostics + sizing fallback (landed in the v0.8.2 spike
+ * round). Owner report on v0.8.0 AND v0.8.1: the panel "can't be resized
+ * or scrolled". v0.8.2's index.html mirrors the ONE layout proven in real
+ * UXP on the owner's machines (the Photoshop plugin's panel: html/body
+ * 100% + a 100%-height #root with overflow-y:auto + a capped scrolling
+ * log); this file adds the two things CSS can't:
  *
  * 1. A JS SIZING FALLBACK: if the wrapper still collapses (root much shorter
  *    than the window viewport -- the local browser check caught exactly this
  *    shape, root at 20px), pin root.style.height/width to the viewport and
  *    keep them pinned on every re-measure. Engages only when needed; the
  *    startup log line says which mode is active.
- * 2. GROUND TRUTH on resize: a live "W x H" readout (#dims). Drag a panel
- *    divider / floating-window edge: numbers change => the host resize
- *    reaches the plugin DOM and layout is my problem; numbers frozen =>
- *    host-side (there is a reported Premiere bug about UXP renderer bounds
- *    not resizing vertically) -- dock the panel / restart Premiere, and
- *    report it: that is itself a spike result.
+ * 2. GROUND TRUTH on resize: a live "W x H" readout (#dims, now under the
+ *    panel's ADVANCED disclosure). Drag a panel divider / floating-window
+ *    edge: numbers change => the host resize reaches the plugin DOM and
+ *    layout is my problem; numbers frozen => host-side (there is a reported
+ *    Premiere bug about UXP renderer bounds not resizing vertically) --
+ *    dock the panel / restart Premiere, and report it: that is itself a
+ *    spike result.
  *
  * Deliberately separate from main.js (spike logic untouched). ASCII-only
  * strings on purpose. Every entry point is try/catch'd -- a layout probe
@@ -33,6 +34,16 @@
   let mode = 'css'; // flips to 'js-fallback' if the wrapper collapses
 
   function appendLog(text) {
+    // Prefer the shared logger (helpers.js loads first) so layout lines get
+    // the same timestamp/cap/scroll treatment as everything else; keep the
+    // bare-DOM append as a last resort -- a layout probe must never depend
+    // on another script having survived boot.
+    try {
+      if (typeof log === 'function') {
+        log(text, 'dim');
+        return;
+      }
+    } catch (_) { /* fall through to the direct append */ }
     if (!logEl) return;
     const line = document.createElement('div');
     line.textContent = text;
@@ -101,10 +112,14 @@
     try { uxpVer = require('uxp').versions.uxp; } catch (_) { /* not UXP */ }
     let platform = 'unknown';
     try { platform = require('os').platform(); } catch (_) { /* not UXP */ }
-    appendLog('layout: v0.8.3 -- panel ' + last.w + 'x' + last.h +
+    // No version claim here ON PURPOSE: this line once hardcoded one, which
+    // went stale and told the owner he was in sync when he wasn't (real bug,
+    // 2026-07-24). The boot line in main.js carries the manifest version at
+    // runtime, so every pasted log still self-identifies its build.
+    appendLog('layout: panel ' + last.w + 'x' + last.h +
       ', sizing: ' + mode + ', resize signal: ' + signal +
       ' (+750ms poll), uxp ' + uxpVer + ', platform ' + platform +
-      '. Drag a panel divider and watch the W x H in the header: if the ' +
+      '. Drag a panel divider and watch the W x H under ADVANCED: if the ' +
       'numbers never change, the host is not resizing the plugin (dock the ' +
       'panel / restart Premiere) -- report that.');
   }, 400);

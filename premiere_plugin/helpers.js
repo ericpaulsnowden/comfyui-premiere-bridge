@@ -44,10 +44,59 @@ function bad(msg) { log(`ERR ${msg}`, 'bad'); }
  * the bridge's own control traffic is light, so dim lines cannot flood). */
 function logDebug(msg) { log(msg, 'dim'); }
 
+/** Best-effort stringification of anything thrown or returned as an "error"
+ * -- a real Error, a plain string, or a plain `{message}` object (host APIs
+ * sometimes reject with those); JSON as the last resort so a shaped object
+ * never collapses into "[object Object]". Ported from cpsb log.js. */
+function describeError(error) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && typeof error.message === 'string') {
+    return error.message;
+  }
+  try { return JSON.stringify(error); } catch (_) { return String(error); }
+}
+
 /** Error line from a caught exception, message extracted. */
 function fail(label, error) {
-  bad(`${label}: ${error && error.message ? error.message : error}`);
+  bad(`${label}: ${describeError(error)}`);
 }
+
+/** Writes a fatal error into the panel's always-present #fatal surface
+ * (cpsb's proof-of-life pattern: a boot-time throw must be VISIBLE, never a
+ * silently bare panel). Never throws -- the failure channel itself cannot
+ * become a new failure mode. Also mirrored to the UDT console: a fatal is
+ * the one thing worth console noise. */
+function cprbShowFatal(message) {
+  try {
+    const el = document.getElementById('fatal');
+    if (el) {
+      el.textContent = `Plugin error: ${message}`;
+      el.style.display = 'block';
+    }
+  } catch (_) { /* DOM unavailable -- best-effort only */ }
+  try { console.warn(`[cprb] fatal: ${message}`); } catch (_) { /* ditto */ }
+}
+
+/* Belt-and-braces fatal surfacing for the LATER scripts' top-level code
+ * (connection.js / import_recipe.js / main.js all run after this file): an
+ * uncaught top-level throw or unhandled rejection lands in #fatal instead of
+ * killing the panel with no visible trace. main.js's own try/catch'd boot is
+ * the PRIMARY guard; this catches what that cannot (a throw in a sibling
+ * script's own top level).
+ * VERIFY(spike-S6-followup): window 'error'/'unhandledrejection' events are
+ * unproven on Premiere UXP -- harmless if they never fire (nothing depends
+ * on them; they only add a message to an otherwise-blank failure). */
+try {
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('error', (event) => {
+      cprbShowFatal(describeError((event && (event.error || event.message)) || 'unknown error'));
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      cprbShowFatal(`unhandled rejection: ${describeError(event && event.reason)}`);
+    });
+  }
+} catch (_) { /* the guard itself must never break boot */ }
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 

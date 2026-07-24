@@ -102,13 +102,25 @@ with no export step and no File ▸ Import.
 
 ## ComfyUI Bridge panel (shipped — runs inside Premiere)
 
-The UXP panel at [`premiere_plugin/`](premiere_plugin/) is now a real
-status window: a connection pill (it finds ComfyUI at `localhost:8188` by
-itself and reconnects forever), a server field for other ports, and an
-activity log showing each import as it lands. It performs the actual
-Premiere-side work for **Send to Premiere**: find-or-create the bin,
-import, tag, and (when enabled later) drop the clip at your playhead.
-One panel per server — opening a second one takes over cleanly.
+The UXP panel at [`premiere_plugin/`](premiere_plugin/) is a real status
+window, built to match the Photoshop bridge's panel conventions:
+
+- **A status pill** — connected / connecting / disconnected / standing by —
+  and **one Connect/Disconnect button**. It finds ComfyUI at
+  `localhost:8188` by itself and retries with a calm "retrying in Ns"
+  countdown; **Disconnect really disconnects** (it parks the retry loop
+  until you press Connect, rather than yanking you back online a second
+  later).
+- **An activity log** showing each import as it lands — this is where you
+  watch results arrive.
+- **An Advanced section** with the plugin/server versions (amber if they
+  ever disagree — that means one side is stale), the server address field
+  for a different host/port, and the live panel size.
+
+It performs the actual Premiere-side work for **Send to Premiere**:
+find-or-create the bin, import, tag, colour-label, and — when you enable
+the toggle — drop the clip at your playhead. One panel per server: open a
+second and the first stands by rather than fighting over the connection.
 
 Dev-install via Adobe's **UXP Developer Tool**: Add Plugin → pick
 `premiere_plugin/manifest.json` → Load (**Premiere ≥ 26.3** with Developer
