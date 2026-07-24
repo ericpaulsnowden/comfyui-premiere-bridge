@@ -10,6 +10,7 @@ Contents: §1 scope & tiers · §2 output conventions · §3 Save Premiere
 Timeline · §4 emitted FCP7 XML (xmeml) · §5 emitted EDL · §6 Load Premiere
 Timeline & Get Shot · §7 routes & frontend · §8 versioning & stability ·
 §9 spikes · §10 Tier 2 plugin websocket.
+(§10.6 adds the frontend's own `cprb.send_result` toast event.)
 
 ---
 
@@ -547,3 +548,23 @@ import manually: <path>`, with any notes (temp-copy, trim, batched image)
 indented beneath. No plugin connected is NOT an error — §1's ethos:
 ComfyUI-only must work; the plugin is a better version, never the only
 version. `OUTPUT_NODE = True`; no `IS_CHANGED` override.
+
+### §10.6 `cprb.send_result` (server → ComfyUI frontend)
+
+Emitted once per `PremiereSendResult` run (`context.send_event`, i.e.
+`PromptServer.send_sync` — thread-safe, so the node's worker thread emits
+it directly):
+
+| Field | Meaning |
+|---|---|
+| `results` | list of `{path, pushed}` — one entry per resolved file, in push order (video first when both inputs are wired) |
+| `bin_name` | the bin the push asked for (echoed for the toast's wording) |
+
+WHY it exists: the node's `ui.text` summary is not rendered by anything in
+ComfyUI, so a run whose push failed looked identical to one that worked
+(owner, 2026-07-24: "The run finished, but I didn't see a message anywhere
+that it didn't work"). `web/cprb/send_result.js` turns this event into a
+toast — a short info one on success, and on failure a long-lived WARNING
+carrying the full path, because the user's next action is to import that
+file by hand. Failure to emit or render is swallowed: a UI notification
+never fails a finished run.

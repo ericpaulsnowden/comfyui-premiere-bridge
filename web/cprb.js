@@ -11,6 +11,7 @@ import { app } from '../../scripts/app.js'
 import { FRONTEND_VERSION, warn } from './cprb/api.js'
 import { SETTINGS, initSettings } from './cprb/settings.js'
 import { attachNodeUi } from './cprb/nodes.js'
+import { initSendResultToasts } from './cprb/send_result.js'
 
 const REPO_URL = 'https://github.com/ericpaulsnowden/comfyui-premiere-bridge'
 
@@ -30,6 +31,14 @@ app.registerExtension({
       await initSettings()
     } catch (error) {
       warn('initSettings failed', error)
+    }
+    // Independent of initSettings: a backend that's unreachable at load
+    // (so the version fetch above failed) must still get its Send-to-
+    // Premiere toasts once it comes back — PROTOCOL.md §10.6.
+    try {
+      initSendResultToasts()
+    } catch (error) {
+      warn('initSendResultToasts failed', error)
     }
   },
 

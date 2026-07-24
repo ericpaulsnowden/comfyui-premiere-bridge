@@ -47,15 +47,24 @@ RESULTS_DIRNAME = "premiere_results"
 
 DEFAULT_BIN_NAME = "ComfyUI Results"
 
-#: §10.3/§10.5: the color_label COMBO's options. "None" (the default) means
-#: "don't label" and is sent as "" on the wire (the plugin skips empty —
-#: there IS no "None" member in Premiere's 15-color label enum, so mapping
-#: it to an index would be wrong by construction). The color names mirror
-#: the plugin's own name map (import_recipe.js CPRB_LABEL_COLOR_INDEX),
-#: which itself prefers a live `Constants` enum match when one exists.
-COLOR_LABEL_NONE = "None"
+#: §10.3/§10.5: the color_label COMBO's options. "Default" (the default
+#: option) means "leave whatever label Premiere already gave the clip" and is
+#: sent as "" on the wire — the plugin's documented skip value. Named
+#: "Default", NOT "None" (owner correction 2026-07-24: "None should be
+#: 'default' as there isn't a way to not have a color" — every Premiere clip
+#: carries some label, so "None" described a state that cannot exist).
+#: LEGACY_COLOR_LABEL_NONE keeps a workflow saved with the v0.9.2 wording
+#: working: ComfyUI restores COMBO values as plain strings, so an old
+#: "None" must still mean "don't label" rather than error or label
+#: arbitrarily.
+COLOR_LABEL_DEFAULT = "Default"
+LEGACY_COLOR_LABEL_NONE = "None"
+#: Color names for the plugin's lookup. Its live `Constants.ProjectItemColorLabel`
+#: enum is the authority (CONFIRMED on 26.3 by the owner's 2026-07-24 run:
+#: "via Constants.ProjectItemColorLabel.LAVENDER"); the plugin's hardcoded
+#: name→index map is only a fallback.
 COLOR_LABEL_OPTIONS = [
-    COLOR_LABEL_NONE,
+    COLOR_LABEL_DEFAULT,
     "violet",
     "iris",
     "caribbean",
@@ -343,11 +352,11 @@ class PremiereSendResult:
                 "color_label": (
                     COLOR_LABEL_OPTIONS,
                     {
-                        "default": COLOR_LABEL_NONE,
+                        "default": COLOR_LABEL_DEFAULT,
                         "tooltip": (
                             "Premiere label color for the imported clip — makes a "
-                            "run's results visually distinct in the bin. None = "
-                            "leave the clip's label alone."
+                            "run's results visually distinct in the bin. Default = "
+                            "leave whatever label Premiere gives it."
                         ),
                     },
                 ),
@@ -375,7 +384,7 @@ class PremiereSendResult:
         image: Any = None,
         label: str = "",
         bin_name: str = DEFAULT_BIN_NAME,
-        color_label: str = COLOR_LABEL_NONE,
+        color_label: str = COLOR_LABEL_DEFAULT,
         insert_at_playhead: bool = False,
     ) -> dict[str, Any]:
         if _context is None:
@@ -388,12 +397,18 @@ class PremiereSendResult:
             )
 
         results_dir = _context.output_dir / RESULTS_DIRNAME
-        # §10.3: "None" (the widget default) travels as "" — the plugin's
+        # §10.3: "Default" (the widget default) travels as "" — the plugin's
         # documented skip-when-empty value; a real color name passes through
-        # for the plugin's Constants-enum/name-map lookup.
-        wire_color = "" if color_label == COLOR_LABEL_NONE else color_label
+        # for the plugin's Constants-enum/name-map lookup. A workflow saved
+        # under v0.9.2's "None" wording means the same thing.
+        wire_color = (
+            ""
+            if color_label in (COLOR_LABEL_DEFAULT, LEGACY_COLOR_LABEL_NONE)
+            else color_label
+        )
         lines: list[str] = []
         resolved: list[Path] = []
+        sent: list[dict[str, Any]] = []
 
         for input_value, resolver in ((video, _resolve_video_file), (image, _resolve_image_file)):
             if input_value is None:
@@ -415,6 +430,23 @@ class PremiereSendResult:
             else:
                 lines.append(f"Plugin not connected — import manually: {path}")
             lines.extend(f"  {note}" for note in notes)
+            sent.append({"path": str(path), "pushed": bool(pushed)})
 
         logger.info("cprb send_result: %s", "; ".join(line.strip() for line in lines))
+        # §10.6: tell the FRONTEND what happened. The node's `ui.text` alone
+        # was invisible in practice (owner, 2026-07-24: "The run finished, but
+        # I didn't see a message anywhere that it didn't work") — nothing in
+        # ComfyUI renders an arbitrary `ui.text` payload, so a run whose push
+        # silently failed looked identical to a successful one. This event
+        # drives a toast (web/cprb/send_result.js): quiet confirmation on
+        # success, a persistent warning carrying the path on failure.
+        if _context.send_event is not None and sent:
+            try:
+                _context.send_event(
+                    "cprb.send_result",
+                    {"results": sent, "bin_name": bin_name},
+                )
+            except Exception:
+                # A UI notification must never fail a finished run.
+                logger.warning("cprb send_result: could not emit the UI event", exc_info=True)
         return {"ui": {"text": lines}, "result": (str(resolved[0]),)}

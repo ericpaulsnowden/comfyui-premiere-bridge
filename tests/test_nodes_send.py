@@ -388,22 +388,34 @@ def test_execute_both_inputs_push_both_and_video_path_is_primary(
 # --- color_label (v0.9.2, PROTOCOL.md §10.3/§10.5) ------------------------------
 
 
-def test_color_label_widget_is_appended_last_with_none_default() -> None:
+def test_color_label_widget_is_appended_last_with_default_option() -> None:
     """New widgets are APPENDED (ComfyUI restores saved widget values by
-    position — §8's stability rule), and the default is the no-op "None"."""
+    position — §8's stability rule). The no-op option is named "Default", not
+    "None" (owner correction 2026-07-24: every Premiere clip carries some
+    label, so "None" named a state that cannot exist)."""
     optional = PremiereSendResult.INPUT_TYPES()["optional"]
     assert list(optional)[-2:] == ["color_label", "insert_at_playhead"]
     options, spec = optional["color_label"]
-    assert spec["default"] == "None"
-    assert options[0] == "None"
+    assert spec["default"] == "Default"
+    assert options[0] == "Default"
+    assert "None" not in options
     assert "teal" in options and len(options) == 17  # None + Premiere's 15+1 names
 
 
-def test_color_label_none_travels_as_empty_string(
+def test_color_label_default_travels_as_empty_string(
     context: BridgeContext, pushes: list[dict]
 ) -> None:
     PremiereSendResult().execute(image=_image_batch(1), label="x")
     assert pushes[0]["color_label"] == ""  # the plugin's documented skip value
+
+
+def test_color_label_legacy_none_is_still_accepted(
+    context: BridgeContext, pushes: list[dict]
+) -> None:
+    """A workflow saved under v0.9.2 still carries the string "None" — it must
+    keep meaning "don't label", not error and not label arbitrarily."""
+    PremiereSendResult().execute(image=_image_batch(1), label="x", color_label="None")
+    assert pushes[0]["color_label"] == ""
 
 
 def test_color_label_real_color_passes_through(
@@ -430,3 +442,42 @@ def test_insert_at_playhead_true_passes_through(
         image=_image_batch(1), label="x", insert_at_playhead=True
     )
     assert pushes[0]["insert_at_playhead"] is True
+
+
+# --- cprb.send_result UI event (v0.9.4, PROTOCOL.md §10.6) ----------------------
+
+
+def test_send_result_event_reports_pushed_state(tmp_path: Path) -> None:
+    """The node's ui.text is not rendered by anything in ComfyUI, so the
+    frontend toast depends on this event carrying per-file outcomes."""
+    events: list[tuple[str, dict]] = []
+    ctx = BridgeContext(
+        output_dir=tmp_path / "out",
+        input_dir=tmp_path / "in",
+        send_event=lambda name, payload: events.append((name, payload)),
+    )
+    nodes_send.set_context(ctx)
+    PremiereSendResult().execute(image=_image_batch(1), label="x", bin_name="B")
+
+    assert len(events) == 1
+    name, payload = events[0]
+    assert name == "cprb.send_result"
+    assert payload["bin_name"] == "B"
+    # No plugin connected in this test -> pushed False, path present so the
+    # toast can tell the user what to import by hand.
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["pushed"] is False
+    assert payload["results"][0]["path"].endswith(".png")
+
+
+def test_send_result_event_survives_a_failing_emitter(tmp_path: Path) -> None:
+    """A UI notification must never fail a finished run."""
+    def boom(_name: str, _payload: dict) -> None:
+        raise RuntimeError("frontend gone")
+
+    ctx = BridgeContext(
+        output_dir=tmp_path / "out", input_dir=tmp_path / "in", send_event=boom
+    )
+    nodes_send.set_context(ctx)
+    result = PremiereSendResult().execute(image=_image_batch(1), label="x")
+    assert Path(result["result"][0]).is_file()

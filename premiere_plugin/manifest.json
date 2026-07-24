@@ -2,7 +2,7 @@
   "id": "com.epsnowden.comfyui-premiere-bridge",
   "name": "ComfyUI for Premiere",
   "shortname": "comfyui-pr",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "main": "index.html",
   "host": {
     "app": "premierepro",
