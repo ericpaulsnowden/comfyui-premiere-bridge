@@ -65,6 +65,9 @@ _NODE_SPECS = [
     ("nodes_load", "PremiereIterateShots", "Iterate Shots"),
     ("nodes_load", "PremiereShotFrame", "Get Shot Frame"),
     ("nodes_send", "PremiereSendResult", "Send to Premiere"),
+    # M2's return direction (PROTOCOL.md §11): what Premiere sends INTO a graph.
+    ("nodes_source", "PremiereFrameSource", "Frame from Premiere"),
+    ("nodes_source", "PremiereClipSource", "Clip from Premiere"),
 ]
 
 NODE_CLASS_MAPPINGS = {}

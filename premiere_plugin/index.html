@@ -153,17 +153,28 @@
 
     <div class="rule"></div>
 
-    <!-- S7 stays a first-class button while it gates M2 (docs/SPIKES.md). -->
-    <div class="section-title">M2 SPIKE</div>
+    <!-- M2's RETURN direction (PROTOCOL.md §11): what the user is looking at
+         in Premiere becomes an `export_ready` message. Both buttons are
+         secondary -- Connect owns the panel's single cta slot. -->
+    <div class="section-title">SEND TO COMFYUI</div>
     <div class="row">
-      <sp-button id="spike-s7" variant="secondary">S7: frame-export probe</sp-button>
+      <sp-button id="send-frame" variant="secondary">Frame &#8594; ComfyUI</sp-button>
+      <sp-button id="send-clip" variant="secondary">Clip &#8594; ComfyUI</sp-button>
     </div>
-    <p class="hint">S7 probes the export API for M2 &mdash; run it with a sequence open, then Copy log and paste it back.</p>
+    <p class="hint">Frame sends the still under the playhead; Clip sends the selected timeline clip's own media file plus its source in/out (no re-encode) &mdash; then add a "Frame from Premiere" / "Clip from Premiere" node in ComfyUI and press Run.</p>
 
     <div class="rule"></div>
 
+    <!-- No spike buttons: S6 A-E and S7 all PASSED (docs/SPIKES.md LIVE
+         RESULTS). S7's button is deliberately GONE rather than left around --
+         its ladder called manager.exportSequence(...) and stopped at the first
+         shape that did not throw, so a misclick beside the buttons above could
+         have started a whole-sequence render or an AME queue. Its read-only
+         successor is cprbLogExporterProbe in export_source.js, which runs on
+         every Frame -> ComfyUI click. -->
+
     <div class="section-title">ACTIVITY</div>
-    <p class="hint">M1 is one-way: run a Send to Premiere workflow in ComfyUI and the result imports into a bin automatically &mdash; watch it land here.</p>
+    <p class="hint">Everything the bridge does lands here &mdash; results arriving from ComfyUI, and frames/clips sent up to it. Copy log captures a whole run.</p>
     <div id="log"></div>
     <div class="row">
       <sp-button id="copy-log" variant="secondary">Copy log</sp-button>
@@ -198,6 +209,7 @@
   <script src="helpers.js"></script>
   <script src="connection.js"></script>
   <script src="import_recipe.js"></script>
+  <script src="export_source.js"></script>
   <script src="main.js"></script>
   <script src="layout.js"></script>
 </body>

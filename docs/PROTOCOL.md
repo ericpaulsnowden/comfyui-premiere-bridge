@@ -9,7 +9,8 @@ as `PROTOCOL.md §N`.
 Contents: §1 scope & tiers · §2 output conventions · §3 Save Premiere
 Timeline · §4 emitted FCP7 XML (xmeml) · §5 emitted EDL · §6 Load Premiere
 Timeline & Get Shot · §7 routes & frontend · §8 versioning & stability ·
-§9 spikes · §10 Tier 2 plugin websocket.
+§9 spikes · §10 Tier 2 plugin websocket (M1: ComfyUI → Premiere) ·
+§11 Tier 2 M2: Premiere → ComfyUI.
 (§10.6 adds the frontend's own `cprb.send_result` toast event.)
 
 ---
@@ -585,3 +586,416 @@ painted on the node that did the work; the toast is the glanceable extra.
 carrying the full path, because the user's next action is to import that
 file by hand. Failure to emit or render is swallowed: a UI notification
 never fails a finished run.
+
+## §11 Tier 2 — M2: Premiere → ComfyUI
+
+§10 is the outbound half: ComfyUI pushes a finished result and the panel
+imports it. **M2 is the RETURN direction** — the panel hands ComfyUI
+something out of the open project, and a source node in the graph picks it
+up. Together the two halves are the round trip that
+`examples/premiere_roundtrip.json` demonstrates end to end.
+
+M2 adds **no new route and no new message type**: it reuses §10.1's
+`GET /cprb/ws`, adds one additive field to §10.2's `hello_ack`, and fixes
+the field schema of §10.4's already-accepted `export_ready` (which M1
+shipped as an accept-and-relay stub for exactly this reason).
+
+**SAME-MACHINE ONLY**, unchanged from §10.1 and for the same reason: no
+bytes cross the websocket in either direction. Every M2 message carries an
+absolute host-filesystem path, and ComfyUI opens that path itself. A panel
+on another machine would send paths ComfyUI cannot read.
+
+Two gestures, deliberately ASYMMETRIC because Premiere's own capabilities
+are:
+
+| Panel button | What Premiere does | What ComfyUI receives |
+|---|---|---|
+| **Frame → ComfyUI** | exports ONE still at the playhead of the active sequence (`pr.Exporter.exportSequenceFrame`, §11.7) | a fresh PNG inside §11.1's `frames_dir` |
+| **Clip → ComfyUI** | **nothing** — reads the selected clip's own `getMediaFilePath()` plus its SOURCE in/out points | the ORIGINAL media file's path plus a time range. Zero export, zero re-encode, instant for multi-GB media |
+
+The clip half is free because the backend already decodes media itself
+(`cprb/frame_extract.py`, `cprb/probe.py`) — §1's ethos again: the pack adds
+only what the ecosystem lacks, and "hand a loader a path and an in/out" is
+something the ecosystem already does very well.
+
+The two new nodes are `PremiereFrameSource` (display "Frame from Premiere",
+§11.4) and `PremiereClipSource` (display "Clip from Premiere", §11.5), both
+CATEGORY `"Premiere Bridge"` like every other node here. Per §8 both class
+ids — and the widget ORDER on each — are **FROZEN once shipped**: saved
+workflows reference nodes by id and restore widget values BY POSITION, so
+later widgets are appended at the END only.
+
+### §11.1 `hello_ack` gains `frames_dir` (server → plugin)
+
+§10.2's `hello_ack` gains ONE additive field. Additive is the whole point: an
+M1 plugin ignores it and keeps working, and an M2 plugin talking to an M1
+server sees it missing and REFUSES to export — naming the reason in its log
+("the ComfyUI side is older than the M2 server — update it") rather than
+inventing an output path that would fail silently. "Clip → ComfyUI" needs no
+`frames_dir` at all and stays fully usable.
+
+| Field | Meaning |
+|---|---|
+| `type` | `"hello_ack"` |
+| `server_version` | unchanged (§10.2) — `cprb/version.py` |
+| `frames_dir` | **new.** Absolute path of the folder the panel writes frame exports into — `<ComfyUI input dir>/premiere_frames/` by default, or `$CPRB_FRAMES_DIR` when that names an ABSOLUTE path — **created by the server on demand** as the handshake is answered |
+
+- Under ComfyUI's INPUT dir (not output) because these are inputs to a
+  graph — the same tree `LoadImage` and the video loaders already browse.
+  Sibling naming to §2's `premiere_timelines` and §10.5's `premiere_results`,
+  both of which are output-side.
+- The server creates it at `hello`, so it is writable the instant the plugin
+  finishes handshaking. The plugin never creates it — with
+  `localFileSystem: "request"` it cannot create a folder the user never
+  picked in a dialog — and **never invents a subfolder inside it** (no
+  per-sequence, per-date nesting), because Premiere's export writes nothing
+  at all when its target directory is missing (§11.7).
+- Asking where the folder is must not be the thing that creates it, so
+  `resolve_frames_dir` (compute) and `ensure_frames_dir` (create) are
+  separate — the same split §7.2's `timeline_dir` route already uses.
+- **`CPRB_FRAMES_DIR` redirects it.** An ABSOLUTE path in that environment
+  variable wins over the default; anything else is ignored with a log line
+  and never an error — the same posture §3.2's `output_dir` takes on
+  `PremiereSaveTimeline`, and for the same reason. ComfyUI's input dir is
+  often a NAS/UNC share on a real install, whether Premiere's exporter can
+  write a PNG over SMB is not something this pack can prove for every setup,
+  and the plugin deliberately refuses to invent a path — so without an escape
+  hatch a share that refuses the write would brick "Frame → ComfyUI" short of
+  moving ComfyUI's entire input directory. The effective folder is logged at
+  INFO on every `hello`, so it is visible in the ComfyUI console and not only
+  in the panel.
+- **Preparing the folder runs OFF the event loop, bounded** (5 s). `mkdir`
+  and the prune pass below are blocking syscalls, and against a sleeping SMB
+  share a blocking `mkdir` on aiohttp's loop stalls ComfyUI *entirely* —
+  every HTTP request, the frontend websocket, queue progress — presenting as
+  "ComfyUI froze when I connected the Premiere panel". On timeout the
+  handshake is answered anyway with the resolved path.
+- **Retention: the newest 200 `*.png` survive; older ones are deleted** on
+  each `hello`, in that same off-loop task. A contract, not a surprise: every
+  click writes a fresh full-resolution still (unique names are *required* —
+  §11.7 — which is exactly what stops the folder self-limiting), a 4K PNG is
+  10-25 MB, and nothing else would ever clean it up. Only `*.png` is touched.
+- Directory-creation failure is logged and NOT raised: the handshake matters
+  more than the folder, and `hello_ack` still reports the resolved path so
+  the failure stays diagnosable (the plugin's export error names it, and
+  §11.4's `VALIDATE_INPUTS` says the file is missing) rather than handing the
+  plugin nowhere to write.
+
+### §11.2 `export_ready` (plugin → server)
+
+Already accepted and relayed VERBATIM (minus `type`) by
+`cprb.routes._handle_plugin_message` since M1 (§10.4). M2 fixes its payload:
+
+| Field | Present for | Meaning |
+|---|---|---|
+| `type` | always | `"export_ready"` |
+| `kind` | always | `"frame"` or `"clip"` — selects which node class consumes it (§11.3) |
+| `path` | always | ABSOLUTE host path. `kind=frame`: the exported still, inside `frames_dir`. `kind=clip`: the clip's OWN media file (`ClipProjectItem.getMediaFilePath()`) — never a copy, never an export |
+| `label` | always | Human name for toasts and logs: the sequence name for a frame, the clip's `getName()` for a clip. Never used to build a path |
+| `ticks` | frame only | Playhead `TickTime.ticks` — a STRING (§10's ground truth: ticks overflow a JS number) |
+| `seconds` | frame only | Playhead `TickTime.seconds` — a number; where in the SEQUENCE the still came from |
+| `start_seconds` | clip only | The clip's in point **inside its SOURCE media**, seconds (`getInPoint()`, never `getStartTime()`) |
+| `end_seconds` | clip only | The clip's out point inside its source media, seconds (`getOutPoint()`). **EXCLUSIVE** — see §11.7 |
+
+**The server checks the path and says so, additively.** Two fields are
+ADDED to the relayed payload (nothing the plugin sent is ever rewritten):
+
+| Field | Meaning |
+|---|---|
+| `path_exists` | `true`/`false` — does a file exist there? ABSENT means unverified (the check timed out, or an older server) |
+| `resolved_path` | present only when a `kind=frame` path resolved to a DIFFERENT name than reported — i.e. the doubled-extension fallback below found the file. The frontend writes this into the widget |
+
+- This hop is the ONLY one that both sees the message and can look at the
+  disk. The panel cannot: its `localFileSystem: "request"` manifest grants
+  access only to entries the user picked in a dialog, so its own probe
+  answers "cannot tell" for any path under ComfyUI's input dir — which makes
+  its whole retry-under-a-fresh-name ladder unreachable on a real install.
+  Meanwhile `exportSequenceFrame` is documented to return `true` and
+  sometimes write nothing (§11.7). Without this check the panel says "sent",
+  the frontend toasts "press Run when ready", and the user only finds out at
+  Run time — from advice that would loop forever, because nothing upstream
+  can detect the failure. §11.4's `VALIDATE_INPUTS` stays as the second belt.
+- A `kind=frame` path gets the doubled-extension fallback; a `kind=clip` path
+  is taken LITERALLY. That defect belongs to `exportSequenceFrame` alone, and
+  guessing at alternate names for Premiere's own media file would be
+  inventing facts.
+- The check is off-loop and bounded (5 s), for §11.1's reasons. A missing
+  file is also logged at WARNING server-side.
+- Otherwise the relay is VERBATIM: unknown extra fields ride along untouched
+  (§8's additive rule) — a newer panel may send more than an older frontend
+  reads.
+
+### §11.3 `cprb.export_ready` (server → ComfyUI frontend)
+
+The relayed payload above, emitted as the frontend event
+`cprb.export_ready` via `context.send_event` (`PromptServer.send_sync`).
+`web/cprb/premiere_source.js` listens — registered from `web/cprb.js`
+alongside §10.6's `send_result.js` — and does exactly this:
+
+1. Find EVERY node in the CURRENT graph whose class matches `kind`:
+   `frame` → `PremiereFrameSource`, `clip` → `PremiereClipSource`.
+2. Write the payload into each match's widgets through their real setters —
+   `path` for a frame; `path` + `start_seconds` + `end_seconds` for a clip —
+   then mark the canvas dirty (per node AND per graph) so the nodes repaint.
+   §11.2's `resolved_path` wins over `path` when present, so the node opens
+   the file that EXISTS rather than the one Premiere claimed to write.
+3. Toast (`app.extensionManager?.toast?.add?.(...)`, every hop
+   optional-chained, §10.6's pattern) naming `label` and how many nodes were
+   updated.
+
+Policy — decided, and not for implementation to reopen:
+
+- **Update every match**, not just the first. A graph with two frame sources
+  (an A/B compare) updates both; silently picking one would be a mystery.
+- **ZERO matches ⇒ a WARNING toast** telling the user which node to add, by
+  its exact menu name, and carrying the full path. Nothing else in the UI
+  would show that an export succeeded and landed nowhere — and nothing is
+  lost, because the file is already on disk.
+- **NEVER auto-queue.** The panel button loads the frame; the USER presses
+  Run. An export that silently spends GPU time is a trap, and exporting a
+  frame just to look at it before deciding to run anything is normal use.
+  (This is also what keeps the broadcast benign: `send_sync` reaches EVERY
+  connected frontend, so all open ComfyUI tabs get the path — harmless when
+  nothing queues, five prompts if anything did.)
+- **`path_exists === false` ⇒ a WARNING toast, not "press Run when ready".**
+  The widgets are still filled in (the path is the best record of what
+  Premiere claimed, and a retry then needs only the button), but the success
+  toast would otherwise send the user to a Run that can only fail, with
+  nothing to say the export — not the graph — was the problem. An ABSENT
+  `path_exists` means unverified and is treated as fine.
+- **Version skew degrades to a warning toast that still carries the path**,
+  never a silent drop and never a throw: an unrecognized `kind` (a newer
+  panel than the pack), a matching node with no `path` widget, and an empty
+  `path` on the wire each get their own message naming the likely cause. An
+  absent `start_seconds`/`end_seconds` leaves the widget's existing value
+  alone rather than zeroing a valid range.
+- Nothing in the relay may throw into the event handler: every step is
+  wrapped, and a failure degrades to a `warn` with the file still on disk.
+
+### §11.4 `PremiereFrameSource` (display: "Frame from Premiere")
+
+- Widget: `path` (STRING) — an ORDINARY, VISIBLE widget that §11.3's relay
+  fills in. The user never types it in normal use, but it is deliberately not
+  hidden: it serializes (a saved workflow reopens pointing at the last frame
+  it received), hand-typing works with no panel connected at all, and a path
+  sitting in plain sight is a second confirmation channel independent of the
+  transient toast. The relay finds it BY NAME on `node.widgets`, so any
+  future visual hide must be draw-time and KEEP it in that list — splicing it
+  out, or moving it into an INPUT_TYPES `hidden` section, silently kills the
+  entire return direction.
+- Outputs, in this order: `image` (IMAGE), `width` (INT), `height` (INT),
+  `path` (STRING). `image` is the still decoded to ComfyUI's normal HWC RGB
+  float [0,1], batch 1; `width`/`height` are its decoded pixel dimensions
+  (feed a resize, a latent, a Create Video); `path` is the RESOLVED path
+  actually opened — see the doubled-extension fallback below — for anything
+  that wants the file itself.
+- **Path resolution** happens here, not in the panel: normally `path` as
+  given, and if that is missing, the doubled-extension name (`foo.png` →
+  `foo.png.png`) that Premiere wrote before 26.2.2 (§11.7). One extra `stat`,
+  only when the reported path is absent, so it can never shadow a real file.
+- `VALIDATE_INPUTS` carries the friendly upfront errors: an empty `path` ⇒
+  name the BUTTON to press (never "type a path" — that is not how the node is
+  driven); a path that resolves to nothing ⇒ the missing path, named, plus
+  "click Frame → ComfyUI again". That is also the guard against §11.7's
+  documented Premiere behavior of reporting success before — or without —
+  writing the file. A `path` of `None` (the widget converted to a socket, a
+  link ComfyUI cannot evaluate at validation time) passes through to
+  `execute`, which raises there.
+- `IS_CHANGED` → the resolved file's mtime/size, so re-exporting to the same
+  path re-runs the graph (§6.1 does the same for a re-exported XML).
+
+### §11.5 `PremiereClipSource` (display: "Clip from Premiere")
+
+- Widgets, in this FROZEN order, all ORDINARY and VISIBLE (§11.3's relay
+  fills them in; hand-typing works with no panel connected, and §11.4's
+  keep-them-in-`node.widgets` rule applies identically): `path` (STRING),
+  `start_seconds` (FLOAT), `end_seconds` (FLOAT).
+  Both FLOATs are declared `round: False` — a frame is ~0.0417 s at 23.976,
+  so the frontend's usual 3-decimal rounding could shift an in point across a
+  frame boundary.
+- Outputs, in this order: `shots` (`CPRB_SHOT_LIST`), `path` (STRING),
+  `start_seconds` (FLOAT), `end_seconds` (FLOAT). The last three report the
+  **EFFECTIVE** values actually used — after the clamping and whole-file
+  fallback below — not necessarily the raw widget values.
+- `shots` is the reuse that matters: **one** shot in §6.2's frozen dict
+  shape, so a clip lifted off the Premiere timeline wires straight into the
+  already-shipped `Get Shot`, `Get Shot Frame` and `Iterate Shots` nodes
+  with no new consumer code (and through `Get Shot` into VHS's
+  `Load Video (Path)`, exactly as a loaded timeline's shots already do). The
+  plain `path` / `start_seconds` / `end_seconds` outputs exist for
+  seconds-based loaders that want a path and a range directly.
+- Building that shot dict — §6.2's keys VERBATIM (`name, path, start, end,
+  in, out, sequence_fps, source_fps, enabled, width, height`). The panel
+  sends a path and two times, so the rest comes from probing the file with
+  `cprb.probe.probe_media`, the same probe `Save Premiere Timeline` uses:
+
+  | key | value |
+  |---|---|
+  | `name` | the media file's STEM. §11.2's `label` (Premiere's own clip name, possibly a timeline rename) is deliberately NOT a widget here, so the stem is the honest answer |
+  | `path` | the resolved media file |
+  | `in` | `round(start_seconds * source_fps)` — SOURCE frames, §6.1's meaning |
+  | `out` | `round(end_seconds * source_fps)` — source frames, `end_seconds` EXCLUSIVE, which is what makes `Get Shot`'s `frame_count = out - in` come out right |
+  | `start` / `end` | `-1` — UNRESOLVED. §6.1's `start`/`end` are TIMELINE frames and a clip selection carries no timeline position; `-1` is the same "no value" marker §6.1's parser already yields for a missing `<start>`, and no §6.3/§6.4/§6.5 consumer reads either key |
+  | `source_fps` | probed native rate (`MediaInfo.fps`) |
+  | `sequence_fps` | DEFAULTED to the same value as `source_fps` |
+  | `enabled` | `True` — the user explicitly selected this clip |
+  | `width` / `height` | probed native pixels |
+
+  `sequence_fps` is a default, not a fact: the sequence rate is not
+  transported (it is not in §11.2's payload and inventing one would be a
+  fiction), and every §6.3 consumer derives its outputs from `source_fps` —
+  never `sequence_fps` — so the substitution cannot skew a downstream number.
+- `execute` ALWAYS logs the derived numbers at INFO — `in`, `out`,
+  `frame_count`, `source_fps`, the effective source span — not just when
+  something is defaulted. Whether Premiere's `getOutPoint()` is inclusive or
+  exclusive is undocumented and this node commits to EXCLUSIVE; that line is
+  what makes one live run settle it against Premiere's own clip-duration
+  readout, instead of an off-by-one frame surfacing invisibly downstream in
+  `Get Shot`'s `frame_count`.
+- Defaults and clamps, each one **stated out loud** in the server log rather
+  than applied silently (this node has no UI summary; its shot list IS the
+  payload): a negative `start_seconds` clamps to 0; `end_seconds <= 0` means
+  **whole file** and becomes the media's full probed duration; a span shorter
+  than one frame emits a single frame (`out = in + 1`) rather than a
+  `frame_count` of 0 that would load nothing.
+- `VALIDATE_INPUTS`: empty `path` ⇒ name the BUTTON to press; missing file ⇒
+  named, with "the clip may be offline in Premiere, or its media may live on
+  a drive this machine cannot see"; an out point at or before the in point
+  (`0 < end_seconds <= start_seconds`) ⇒ named with both values. It
+  deliberately does NOT probe — opening the file with ffmpeg once per queue
+  for a check `execute` already makes is the same trade
+  `PremiereLoadTimeline.VALIDATE_INPUTS` declines for XML parsing. A
+  `path` of `None` passes through, as in §11.4. An unprobeable file is a hard
+  `ValueError` from `execute` naming the file: without a rate and a
+  resolution there is no honest §6.2 shot to emit.
+- `IS_CHANGED` → the media file's mtime/size only. The two seconds widgets
+  are accepted but NOT folded in, for the reason
+  `PremiereLoadTimeline.IS_CHANGED` leaves `skip_disabled` out: ComfyUI
+  already re-runs a node whose literal widget value changed, so this token
+  covers only what it cannot see — the FILE changing under an unchanged path.
+- Known limitations, accepted for M2 and stated here rather than discovered:
+  a **retimed** clip (speed ≠ 100%) or a **reversed** clip arrives as a
+  plain forward source range — the payload carries no speed or direction.
+  **Merged / multicam** clips have several sources behind one project item
+  and `getMediaFilePath()` returns one of them; the panel warns in its log
+  rather than pretending otherwise.
+
+### §11.6 Panel: the "SEND TO COMFYUI" section
+
+A new section in `premiere_plugin/index.html`, below M1's status and log,
+with two buttons — **"Frame → ComfyUI"** and **"Clip → ComfyUI"** — each an
+`sp-button` with an explicit `variant=` and NOT `cta` (Connect owns the
+panel's single `cta`, per the plugin conventions).
+
+- **Both stay clickable at all times; preconditions are reported, not
+  greyed out.** Deliberate, and the opposite of disabling: a dead button
+  explains nothing, while a click that answers "press Connect first" or
+  "the server never sent `frames_dir` — refusing to invent an output path"
+  tells the user exactly what to do. Every precondition is checked in order
+  on click — connection, `frames_dir` (frame only), active sequence,
+  playhead, frame size — and each failure is its own named `bad(...)` line.
+- **The two buttons are serialized against themselves and each other** by a
+  single busy flag: overlapping exports make Premiere race with its own
+  previous write (§11.7), so a double-click logs "another send is still
+  running — ignored" instead of producing two half-exports.
+- Every failure is a named line in the panel log through the existing
+  `log`/`bad`/`describeError`/`fail` helpers — never a silent no-op, and
+  never a throw out of the click handler. The cases that must be named: no
+  project, no active sequence, an unreadable playhead or frame size (a
+  guessed width/height silently produces a stretched frame — abort instead),
+  no clip selected, and a clip whose `getMediaFilePath()` is EMPTY (nested
+  sequences, titles, colour mattes, adjustment layers, offline media —
+  SPIKES S6-C measured 11 of 19 enumerated `ClipProjectItem`s with an empty
+  path, so this is the likely real-world failure, not a theoretical one). An
+  empty `path` must never go out on the wire.
+- The panel says WHICH route produced the clip (timeline selection, or a
+  per-item `getIsSelected()` sweep) so a surprising result is diagnosable.
+  There is deliberately **NO playhead or project-panel fallback** — both
+  would guess at what the user meant; with nothing selected the panel says
+  what to select instead.
+- **An empty selection is SELF-DIAGNOSING, not just an instruction.** It
+  reports what each route actually saw — how many items `getSelection()`
+  returned, and how many tracks/clips the sweep walked with how many able to
+  answer `getIsSelected()` — and then invites the log back if a clip IS
+  selected. "Nothing is selected" while a clip is visibly selected is the
+  single most likely M2 failure (`getIsSelected()` has no Adobe sample, and
+  whether Timeline selection survives focus moving into a UXP panel is
+  undocumented), so it must not produce an empty log.
+- Premiere 26.3 exposes no selection-changed event, so the selection is read
+  at click time.
+- **No spike buttons live in this panel.** S7's button in particular was
+  removed once M2 shipped rather than left as a curiosity: its ladder called
+  `manager.exportSequence(...)` and stopped at the first shape that did not
+  throw, so on a build where any of them is valid a misclick beside these two
+  buttons would start a whole-sequence render or an AME queue — and it never
+  took the busy flag, so it could interleave with a real export. Its
+  read-only successor is the free `typeof`/arity probe of
+  `exportSequenceFrame`, logged on EVERY "Frame → ComfyUI" click before any
+  read that can fail (so a playhead or frame-size failure cannot suppress the
+  one line that diagnoses the export API).
+
+### §11.7 Premiere-side call shapes (the plugin's half)
+
+Recorded here because M2's code cites `PROTOCOL.md §11` at these call sites,
+and because both surfaces have documented traps. Spike history and sourcing:
+SPIKES.md S7.
+
+**Frame export.** Confirmed signature (Adobe's own `premierepro-types`
+`ExporterStatic` plus the 26.3 class reference; arity 6, so
+`pr.Exporter.exportSequenceFrame.length === 6` is a free runtime check):
+
+```
+pr.Exporter.exportSequenceFrame(sequence, time, filename, filepath, width, height)
+  -> Promise<boolean>
+```
+
+- `filename` is a **BASENAME ONLY**; `filepath` is a **DIRECTORY** with no
+  trailing separator. The official parameter table's `filename` example is a
+  full path and is WRONG — a full path there makes Premiere write to a bad
+  combined path and silently produce nothing. Split the target.
+- `width`/`height` come from `await sequence.getFrameSize()` → `RectF
+  {width, height}` (floats — round them). They do NOT preserve aspect ratio;
+  pass a matching pair. A total read failure ABORTS the export (a guessed
+  size silently yields a stretched frame) and dumps `Sequence`'s own and
+  prototype property names on the way out, so the real method name is one
+  click away rather than a dead end.
+- `.png` — the extension in `filename` selects the format.
+- **This is a READ.** No `lockedAccess`, no `executeTransaction`: §10's
+  every-mutation-is-wrapped rule does not apply to it.
+- **A `true` return is not proof the file exists.** It can return before the
+  write completes, and under rapid back-to-back exports it can return `true`
+  and never write at all. Therefore: a **UNIQUE filename per export**
+  (reusing a name races with Premiere still writing the previous one), the
+  whole export retried a few times with a fresh name, and the existence
+  check done SERVER-SIDE — first at the §11.2 relay (which warns immediately)
+  and again in §11.4's `VALIDATE_INPUTS` at queue time.
+- No colons in the filename (illegal on Windows ⇒ the call simply returns
+  `false`), so frames are never named by timecode.
+- The double-extension defect (`abcd.jpg` → `abcd.jpg.jpg`) was fixed in
+  26.2.2, one patch release before the owner's 26.3.0. The panel sends
+  exactly ONE `path` — the exact name it passed to `exportSequenceFrame`; the
+  SERVER resolves the doubled name when that one is missing (§11.2's
+  `resolved_path`, `nodes_source.resolve_frame_path`).
+- Pass the Sequence straight from `project.getActiveSequence()` — never a
+  cast or re-wrapped object (§10's "Invalid parameter." lesson).
+
+**Clip read.** `sequence.getSelection()` → `.getTrackItems()` →
+`item.getProjectItem()` (RAW) → `pr.ClipProjectItem.cast(raw)` →
+`.getMediaFilePath()`, plus `item.getInPoint()` / `item.getOutPoint()`.
+
+- The cast here is MANDATORY, and is the exact MIRROR of §10's lesson:
+  `ProjectItem` has no `getMediaFilePath`, so reading media facts needs the
+  `ClipProjectItem` wrapper, while anything passing a project item as an
+  ARGUMENT into another object's factory needs the RAW item. Keep both
+  handles.
+- `getInPoint()`/`getOutPoint()` are SOURCE-media times — the ones we want.
+  `getStartTime()`/`getEndTime()` are TIMELINE times — the ones we do not.
+  Both return `TickTime`, so `.seconds` is the wire value directly.
+- `end_seconds` is treated as **EXCLUSIVE** (out = one frame past the last
+  frame). Decided here so §11.5's `out` and any downstream trim agree; the
+  26.3 reference never states it either way.
+- A linked A/V click can return both the video and the audio track item, in
+  an undocumented order, and neither track-item class has a static `.cast()`
+  — the video one is identified by the presence of
+  `createAddVideoTransitionAction`.
+- Also a READ path: Adobe's own samples read the selection outside any lock.

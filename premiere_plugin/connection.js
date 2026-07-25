@@ -157,6 +157,9 @@ function cprbPluginVersion() {
  *   serverBase        'host:port'
  *   url               'ws://host:port/cprb/ws'
  *   serverVersion     string | null (from hello_ack)
+ *   framesDir         string | null (from hello_ack -- PROTOCOL.md §11.1's
+ *                     absolute frame-export folder; export_source.js reads
+ *                     it off getState() and refuses to invent one)
  *   lastError         string | null (most recent failure, cleared on connect)
  *   lastErrorBlocking whether lastError needs USER action (a permission-
  *                     shaped constructor throw) vs transient (server not up
@@ -174,6 +177,7 @@ class CprbConnection {
     this.status = 'disconnected';
     this.ready = false;
     this.serverVersion = null;
+    this.framesDir = null;
     this.lastError = null;
     this.attempts = 0;
     this.nextRetryAt = null;
@@ -235,6 +239,7 @@ class CprbConnection {
     this._lastFailureDetail = null;
     this._lastErrorBlocking = false;
     this.serverVersion = null;
+    this.framesDir = null;
     log('disconnected by user -- standing by until Connect');
     this._setStatus('disconnected');
   }
@@ -291,6 +296,7 @@ class CprbConnection {
       serverBase: this._serverBase,
       url: this.getWsUrl(),
       serverVersion: this.serverVersion,
+      framesDir: this.framesDir,
       lastError: this.lastError,
       lastErrorBlocking: this._lastErrorBlocking,
       standby: this._standby,
@@ -335,6 +341,7 @@ class CprbConnection {
     this._lastErrorBlocking = false;
     this._socketErrorDetail = null;
     this.serverVersion = null;
+    this.framesDir = null;
     this._started = true;
     this._open();
   }
@@ -440,9 +447,15 @@ class CprbConnection {
     if (this.ready) {
       // Duplicate hello_ack -- idempotent; just refresh the version.
       this.serverVersion = msg.server_version || this.serverVersion;
+      this.framesDir = msg.frames_dir || this.framesDir;
       return;
     }
     this.serverVersion = msg.server_version || null;
+    // PROTOCOL.md §11.1: the absolute folder "Frame -> ComfyUI" exports into,
+    // created by the server as it answers this handshake. An M1 server sends
+    // no such field -- null then, and export_source.js says so plainly rather
+    // than inventing a path (an unwritable one fails SILENTLY).
+    this.framesDir = (typeof msg.frames_dir === 'string' && msg.frames_dir) || null;
     this.send({ type: 'ready' });
     this.ready = true;
     this.attempts = 0;
@@ -470,6 +483,7 @@ class CprbConnection {
     this._socket = null;
     this.ready = false;
     this.serverVersion = null;
+    this.framesDir = null;
     // Every close-path failure is transient (server not up / refused /
     // dropped) -- "just wait, it's retrying". Only the constructor-throw
     // path in _open is blocking.

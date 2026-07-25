@@ -3,8 +3,10 @@
  * (PROTOCOL.md §7). Tier 1's only graph behavior is the §7.3 file bar
  * (Browse…/Open folder/Open output folder) on PremiereLoadTimeline/
  * PremiereSaveTimeline nodes, attached from `nodeCreated`; everything else
- * is the About badge and the version-mismatch settings section, matching
- * the cpsb pattern.
+ * is the About badge, the version-mismatch settings section, and the two
+ * websocket-event relays registered in `setup()` (§10.6's send-to-Premiere
+ * toasts and §11's export_ready → source-node relay), matching the cpsb
+ * pattern.
  */
 
 import { app } from '../../scripts/app.js'
@@ -12,6 +14,7 @@ import { FRONTEND_VERSION, warn } from './cprb/api.js'
 import { SETTINGS, initSettings } from './cprb/settings.js'
 import { attachNodeUi } from './cprb/nodes.js'
 import { initSendResultToasts } from './cprb/send_result.js'
+import { initPremiereSourceRelay } from './cprb/premiere_source.js'
 
 const REPO_URL = 'https://github.com/ericpaulsnowden/comfyui-premiere-bridge'
 
@@ -39,6 +42,15 @@ app.registerExtension({
       initSendResultToasts()
     } catch (error) {
       warn('initSendResultToasts failed', error)
+    }
+    // M2's return direction (PROTOCOL.md §11): the Premiere panel's
+    // "Frame/Clip → ComfyUI" buttons arrive here as `cprb.export_ready`.
+    // Registered independently for the same reason as above — a failure in
+    // either relay must not cost the user the other one.
+    try {
+      initPremiereSourceRelay()
+    } catch (error) {
+      warn('initPremiereSourceRelay failed', error)
     }
   },
 

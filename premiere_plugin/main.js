@@ -2,10 +2,19 @@
  * main.js -- M1 panel controller: the connection status area (pill +
  * Connect/Disconnect toggle + standby/error/retry lines), the ADVANCED
  * disclosure (version line, server-address field, target URL, error
- * detail), the activity log's Copy/Clear, and the ONE remaining
- * spike-style button: S7, the frame-export probe that gates M2. The M0
- * spike buttons (S6 A-E) are gone -- that round is complete and recorded
- * in docs/SPIKES.md LIVE RESULTS.
+ * detail), the activity log's Copy/Clear, and the SEND TO COMFYUI pair (M2's
+ * return direction -- the actions themselves live in export_source.js).
+ *
+ * NO spike buttons remain. S6 A-E and S7 all PASSED and are recorded in
+ * docs/SPIKES.md LIVE RESULTS. S7's button in particular is gone on purpose
+ * rather than left as a curiosity: its attempt ladder called
+ * `manager.exportSequence(...)` and broke on the first call that did NOT
+ * throw, so on a build where any of those shapes is valid a misclick beside
+ * the SEND TO COMFYUI buttons would have started a whole-sequence render or
+ * an AME queue -- and it never touched export_source.js's busy flag, so it
+ * could also interleave with a real export. Its read-only successor is
+ * `cprbLogExporterProbe` in export_source.js, which every Frame -> ComfyUI
+ * click runs for free.
  *
  * The panel's design mirrors the Photoshop plugin's production panel
  * (cpsb panel.html/panel.js -- the standard-bearer, owner directive
@@ -20,10 +29,11 @@
  * and there is no handoff list / Live Mode / send flow to render.
  *
  * Load order (index.html): helpers.js -> connection.js -> import_recipe.js
- * -> main.js -> layout.js. This file only wires the DOM to globals the
- * earlier scripts define; it defines nothing the others need. All wiring
- * runs inside cprbBootPanel()'s try/catch, so a boot-time throw lands in
- * the #fatal surface (helpers.js cprbShowFatal) instead of dying silently.
+ * -> export_source.js -> main.js -> layout.js. This file only wires the DOM
+ * to globals the earlier scripts define; it defines nothing the others need.
+ * All wiring runs inside cprbBootPanel()'s try/catch, so a boot-time throw
+ * lands in the #fatal surface (helpers.js cprbShowFatal) instead of dying
+ * silently.
  */
 'use strict';
 
@@ -218,97 +228,6 @@ function cprbApplyServerBase() {
   }
 }
 
-/* ------------------- S7: frame-export probe (M2 gate) ------------------ */
-/*
- * PROBE, not a feature: its job is to produce a log Eric pastes back into
- * docs/SPIKES.md, not to succeed. S6-D enumerated EncoderManager's methods
- * and proved Sequence has no per-frame export; what M2 still needs is (a)
- * pr.Exporter's own surface (S6-D never probed Exporter itself), (b) the
- * exportSequence/encodeFile/encodeProjectItem arities, and (c) the EXACT
- * throw text of minimal exportSequence calls -- every throw is DATA.
- * The `export_ready` wire message stays reserved for M2; nothing here sends
- * anything to the server.
- */
-
-async function cprbRunS7Probe() {
-  log('S7: frame-export probe (M2 gate) -- every line below, throws included, is spike DATA; Copy log and paste it back.');
-  try {
-    const pr = ppro();
-    const project = await pr.Project.getActiveProject();
-    if (!project) { bad('S7: no active project -- open one, then re-run'); return; }
-    const sequence = await project.getActiveSequence();
-    if (!sequence) { bad('S7: no active sequence -- open one, then re-run'); return; }
-
-    // Playhead (PROVEN read, S6-D) -- the still M2 would export.
-    const position = await sequence.getPlayerPosition();
-    log(`S7: playhead ticks=${position && position.ticks !== undefined ? position.ticks : String(position)}`);
-
-    // (a) Exporter's own static surface -- S6-D never probed Exporter itself.
-    try {
-      if (pr.Exporter) {
-        log(`S7: Exporter own keys: ${JSON.stringify(Object.getOwnPropertyNames(pr.Exporter).sort())}`);
-        if (pr.Exporter.prototype) {
-          log(`S7: Exporter.prototype keys: ${JSON.stringify(Object.getOwnPropertyNames(pr.Exporter.prototype).sort())}`);
-        }
-      } else {
-        log('S7: pr.Exporter is absent on this build');
-      }
-    } catch (error) { fail('S7: Exporter probe', error); }
-
-    // Export-shaped Constants -- a preset/type enum would name the missing
-    // exportSequence argument.
-    try {
-      if (pr.Constants) {
-        const keys = Object.keys(pr.Constants).filter((k) => /export|encod|preset|frame/i.test(k)).sort();
-        log(`S7: Constants keys matching /export|encod|preset|frame/i: ${JSON.stringify(keys)}`);
-        for (const key of keys) {
-          try { log(`S7: Constants.${key} = ${JSON.stringify(pr.Constants[key])}`); } catch (_) { /* unserializable */ }
-        }
-      } else {
-        log('S7: pr.Constants is absent on this build');
-      }
-    } catch (error) { fail('S7: Constants probe', error); }
-
-    // (b) EncoderManager arities (methods themselves enumerated in S6-D).
-    if (!pr.EncoderManager) { bad('S7: no EncoderManager on the module'); return; }
-    const manager = await pr.EncoderManager.getManager();
-    for (const name of ['exportSequence', 'encodeFile', 'encodeProjectItem']) {
-      try {
-        const fn = manager[name];
-        log(`S7: manager.${name}: ${typeof fn}${typeof fn === 'function' ? ` (.length=${fn.length})` : ''}`);
-      } catch (error) { fail(`S7: manager.${name}`, error); }
-    }
-
-    // (c) Minimal exportSequence attempts, aiming at a still frame. Stop at
-    // the first call that does NOT throw; otherwise harvest exact messages.
-    let outDir = '';
-    try {
-      const os = require('os');
-      if (typeof os.tmpdir === 'function') outDir = os.tmpdir() || '';
-    } catch (_) { /* no os.tmpdir here */ }
-    const sep = outDir.indexOf('\\') !== -1 ? '\\' : '/';
-    const outPath = outDir ? `${outDir}${sep}cprb_s7_frame.png` : 'cprb_s7_frame.png';
-    log(`S7: attempt output path: ${outPath}`);
-    const attempts = [
-      { name: 'exportSequence(sequence)', run: () => manager.exportSequence(sequence) },
-      { name: 'exportSequence(sequence, outPath)', run: () => manager.exportSequence(sequence, outPath) },
-      { name: 'exportSequence(sequence, outPath, "")', run: () => manager.exportSequence(sequence, outPath, '') }
-    ];
-    for (const attempt of attempts) {
-      try {
-        const result = await attempt.run();
-        ok(`S7: ${attempt.name} RETURNED ${JSON.stringify(result)} -- check whether ${outPath} exists!`);
-        break;
-      } catch (error) {
-        log(`S7: ${attempt.name} threw: ${error && error.message ? error.message : error}`);
-      }
-    }
-    ok('S7 RESULT: PROBED -- Copy log and paste it back for SPIKES.md.');
-  } catch (error) {
-    fail('S7 RESULT: FAIL', error);
-  }
-}
-
 /* ------------------------------- startup ------------------------------ */
 
 /** Wires the whole panel. Runs once, inside the guarded call below. */
@@ -360,10 +279,18 @@ function cprbBootPanel() {
   const serverError = document.getElementById('server-error');
   if (serverError) serverError.style.display = 'none';
 
-  // S7 probe (M2 gate) -- logic unchanged from the run that produced the
-  // owner's 2026-07-24 log.
-  const s7 = document.getElementById('spike-s7');
-  if (s7) s7.addEventListener('click', cprbRunS7Probe);
+  // SEND TO COMFYUI -- M2's return direction (export_source.js; PROTOCOL.md
+  // §11). Both actions contain their own errors; cprbRunClick is the second
+  // belt so neither a synchronous throw nor a rejected promise can escape a
+  // click listener.
+  const sendFrame = document.getElementById('send-frame');
+  if (sendFrame) {
+    sendFrame.addEventListener('click', () => cprbRunClick('Frame -> ComfyUI', cprbSendFrameToComfyUI));
+  }
+  const sendClip = document.getElementById('send-clip');
+  if (sendClip) {
+    sendClip.addEventListener('click', () => cprbRunClick('Clip -> ComfyUI', cprbSendClipToComfyUI));
+  }
 
   // Activity-log actions.
   const copyBtn = document.getElementById('copy-log');

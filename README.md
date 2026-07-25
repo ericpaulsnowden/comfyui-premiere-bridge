@@ -14,14 +14,17 @@ Adobe-side install required.
   per-shot processing ("restyle my whole edit") through the video loaders
   you already use.
 
-A future tier adds a Premiere UXP panel (a sibling of
+A second tier adds a Premiere UXP panel (a sibling of
 [comfyui-photoshop-bridge](https://github.com/ericpaulsnowden/comfyui-photoshop-bridge)'s
-plugin) for one-click round trips — the file-based workflow above is the
-floor that always works, and it never depends on the panel.
+plugin) for one-click round trips in both directions — results land in a
+Premiere bin, and a frame or clip comes back out to ComfyUI. The file-based
+workflow above is the floor that always works, and it never depends on the
+panel.
 
 > **Status: pre-release, shipping feature by feature.** Available today:
-> **Save Premiere Timeline** and **Load Premiere Timeline + Get Shot**
-> (both below). Contracts are specified in
+> **Save Premiere Timeline**, **Load Premiere Timeline + Get Shot**,
+> **Send to Premiere**, **Frame → ComfyUI / Clip → ComfyUI**, and the
+> **ComfyUI Bridge panel** (all below). Contracts are specified in
 > [docs/PROTOCOL.md](docs/PROTOCOL.md); Premiere-facing claims stay flagged
 > until the [docs/SPIKES.md](docs/SPIKES.md) live imports pass. This README
 > describes each capability only once it actually ships.
@@ -97,8 +100,61 @@ with no export step and no File ▸ Import.
   exactly what to import manually. The plugin is the better version, never
   the only version.
 - `label` names the clip (empty keeps the filename); `bin_name` picks the
-  bin. Color labels and an insert-at-playhead toggle arrive as small
-  follow-up versions.
+  bin; `color_label` gives a run's results their own label colour in the bin.
+- **`insert_at_playhead` now works** (proven live on Premiere 26.3). Off by
+  default, so results only land in the bin. Switch it on and the clip is also
+  dropped onto the active sequence at your playhead, on the track above, as
+  **one** undo step — and it's skipped with a logged line, never a guess, if
+  no sequence is open.
+
+## Frame → ComfyUI / Clip → ComfyUI (shipped — Tier-2 M2; live Premiere check pending, SPIKES S7-b/S7-c)
+
+The return direction. Two buttons in the panel's **SEND TO COMFYUI** section
+hand Premiere's own content to your graph:
+
+- **Frame → ComfyUI** exports the still at your playhead and drops its path
+  into a **Frame from Premiere** node — which gives you the `image` plus its
+  `width`, `height` and `path`, ready for any image workflow.
+- **Clip → ComfyUI** exports nothing at all. It reads the selected timeline
+  clip's *own* media file and its in/out points, so a **Clip from Premiere**
+  node hands you the original file and the exact range — instant even for
+  multi-GB media, and no re-encode ever touches your footage.
+
+**Clip from Premiere** emits a one-shot `shots` list in the same shape
+**Load Premiere Timeline** produces, so it plugs straight into the **Get
+Shot**, **Get Shot Frame** and **Iterate Shots** nodes you already have —
+plus plain `path` / `start_seconds` / `end_seconds` outputs for
+VideoHelperSuite-style loaders.
+
+Two deliberate behaviours. Clicking a button updates **every** matching source
+node in the open graph (and warns you when there are none, rather than
+succeeding into thin air). And it **never queues a run** — you press Run when
+you're ready, so exporting a frame just to look at it costs nothing.
+
+Together with **Send to Premiere** above, that's the whole loop: frame out,
+work, result back in the bin. **[`examples/premiere_roundtrip.json`](examples/premiere_roundtrip.json)**
+is that loop in four nodes, using nothing but this pack and one core ComfyUI
+node — the inverted colours make a successful round trip obvious at a glance.
+See [examples/README.md](examples/README.md) for what to click, in order.
+
+Same-machine, like the rest of the panel: the two sides exchange file paths,
+not file bytes.
+
+**Where the frames go.** Exported stills land in
+`<ComfyUI input folder>/premiere_frames/`, so they're already somewhere
+ComfyUI can read (and `LoadImage` can browse) with nothing copied. Only the
+**200 newest** are kept — every click writes a new full-resolution PNG, so
+without that the folder would grow forever. If Premiere can't write there —
+an input folder on a NAS share is the case to watch — set the environment
+variable **`CPRB_FRAMES_DIR`** to any absolute local path before starting
+ComfyUI and frames go there instead. ComfyUI's console prints the folder it's
+actually using each time the panel connects.
+
+Two failures worth knowing about, because both are handled rather than
+guessed at: Premiere's frame export can report success and write nothing, so
+**ComfyUI checks the file itself** and warns you immediately instead of at
+Run; and **Clip → ComfyUI** never invents a selection — with nothing selected
+it tells you what it looked at and what to select.
 
 ## ComfyUI Bridge panel (shipped — runs inside Premiere)
 
@@ -117,6 +173,10 @@ window, built to match the Photoshop bridge's panel conventions:
   ever disagree — that means one side is stale), the server address field
   for a different host/port, and the live panel size.
 
+- **A SEND TO COMFYUI section** with the **Frame → ComfyUI** and
+  **Clip → ComfyUI** buttons described above — the panel's half of the
+  return direction.
+
 It performs the actual Premiere-side work for **Send to Premiere**:
 find-or-create the bin, import, tag, colour-label, and — when you enable
 the toggle — drop the clip at your playhead. One panel per server: open a
@@ -124,10 +184,9 @@ second and the first stands by rather than fighting over the connection.
 
 Dev-install via Adobe's **UXP Developer Tool**: Add Plugin → pick
 `premiere_plugin/manifest.json` → Load (**Premiere ≥ 26.3** with Developer
-Mode enabled). The panel also carries the **S7 frame-export probe** — the
-one remaining spike, gating M2's "send a frame/clip back to ComfyUI"
-(spike definitions: [docs/SPIKES.md](docs/SPIKES.md)). The XML nodes above
-remain the fully supported, panel-free path.
+Mode enabled). Every Premiere-facing claim here is tracked in
+[docs/SPIKES.md](docs/SPIKES.md) until a live session proves it. The XML
+nodes above remain the fully supported, panel-free path.
 
 ## Install
 

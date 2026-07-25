@@ -61,15 +61,122 @@ calling the XML output "verified" in the README.
     S6-D's probe.
 - [x] **S7 — frame export (THE M2 gate).** S6-D enumerated
   `EncoderManager`'s method NAMES and proved `Sequence` has no per-frame
-  export; S7 must produce an actual still frame from the playhead. The M1
-  panel (v0.9.1) carries an **"S7: frame-export probe"** button: with a
-  sequence open it logs `Exporter`'s own key surface (never probed),
-  export-shaped `Constants`, the `exportSequence`/`encodeFile`/
-  `encodeProjectItem` arities, and then ATTEMPTS minimal `exportSequence`
-  calls — every throw's exact message is the spike data. Run it, Copy log,
-  paste back. M2 ("Frame → ComfyUI" / "Clip → ComfyUI") does not start
-  until this records a working export call (or proves none exists, which
-  would reroute M2 through a different mechanism).
+  export; S7 had to produce an actual still frame from the playhead. The M1
+  panel (v0.9.1–v0.9.7) carried an **"S7: frame-export probe"** button that
+  logged `Exporter`'s own key surface (never probed), export-shaped
+  `Constants`, the `exportSequence`/`encodeFile`/`encodeProjectItem` arities,
+  and then ATTEMPTED minimal `exportSequence` calls. The owner ran it
+  2026-07-24 and it PASSED (LIVE RESULTS below).
+  **The button was REMOVED in v0.10.0 when M2 shipped** — deliberately, not
+  by tidying: its attempt ladder called `manager.exportSequence(...)` and
+  broke on the first shape that did not throw, so on a build where any of
+  them is valid a misclick beside the new SEND TO COMFYUI buttons would have
+  started a whole-sequence render or an AME queue (`ExportType.QUEUE_TO_AME`
+  was enumerated on this very build), and it never took export_source.js's
+  busy flag so it could interleave with a real export. Its READ-ONLY
+  successor is `cprbLogExporterProbe` (typeof + arity of
+  `exportSequenceFrame`), which every "Frame → ComfyUI" click logs for free,
+  before any read that can fail.
+  - [ ] **S7-b — `exportSequenceFrame`'s own SIGNATURE** (the "NEXT for M2"
+    item S7's LIVE RESULTS left open). **RESOLVED FROM DOCUMENTATION, NOT
+    YET FROM A LIVE RUN** — so it stays unchecked, per this file's rule, and
+    the M2 build is what will check it. What the research established
+    (Adobe's `adobe/premierepro-types` `ExporterStatic` declaration, the
+    official 26.3 `Exporter` class page recommitted 2026-06-11 for 26.3, and
+    three real shipping callers — Adobe's own `premiere-api` sample panel,
+    `mikechambers/adb-mcp`, and `thegreeneyl`'s face-detect plugin, which
+    exports stills to a temp dir for downstream analysis, i.e. our exact use
+    case):
+    - `exportSequenceFrame(sequence, time, filename, filepath, width, height)
+      -> Promise<boolean>`, `Since: 25.6`. Arity 6, so
+      `pr.Exporter.exportSequenceFrame.length === 6` is a free confirmation
+      on the owner's build, and it agrees with S7's live enumeration of
+      `Exporter`'s own keys.
+    - `filename` is a **BASENAME ONLY**, `filepath` a **DIRECTORY** — the
+      official parameter table's `filename` example (a full path) is WRONG:
+      a full path there makes Premiere write to a bad combined path and
+      silently produce NOTHING. All three real callers split dir/base.
+    - `width`/`height` from `await sequence.getFrameSize()` → `RectF
+      {width, height}` (floats, round them).
+    - **No `lockedAccess`/`executeTransaction`** — it is a read; all three
+      callers call it bare.
+    - **The boolean lies in both directions**: it can return before the file
+      is on disk, and under rapid back-to-back exports it can return `true`
+      and never write at all. Unique filename per export + retry, and the
+      existence check on the ComfyUI side. Also: no colons in the name
+      (illegal on Windows ⇒ returns `false`), and the double-extension
+      defect (`abcd.jpg` → `abcd.jpg.jpg`) was fixed in 26.2.2 — one patch
+      before the owner's 26.3.0 — so the server resolves plain-vs-doubled
+      rather than trusting either.
+    - Decision recorded so it is not re-litigated: `premiere_plugin/
+      manifest.json` stays `"localFileSystem": "request"`. Both reference
+      callers use `"fullAccess"`, but only to verify their own writes from
+      the plugin; the native exporter takes a plain string path and needs no
+      UXP file token, and PROTOCOL §11.4 verifies server-side where Python
+      has no sandbox. No user-visible permission escalation for a check the
+      backend does for free.
+    - Full contract now in **PROTOCOL.md §11.7** (frame export AND the
+      clip-read chain), with §11.1–§11.6 for the wire, node and panel halves.
+    - **CHECKS THIS BOX:** the owner's first "Frame → ComfyUI" click
+      producing a real PNG in `<ComfyUI input>/premiere_frames/` that
+      `PremiereFrameSource` then decodes. Anything else — a `false` return, a
+      `true` with no file, a doubled extension on 26.3.0 — is the spike data;
+      record it here verbatim.
+    - **v0.10.0 makes each of those outcomes self-reporting.** The panel
+      cannot stat its own output (`localFileSystem: "request"` refuses an
+      arbitrary path, so its poll ladder answers "cannot tell" and never
+      fires), so the SERVER stats the path as it relays `export_ready` and
+      adds `path_exists` / `resolved_path` (PROTOCOL §11.2). A `true` return
+      with no file therefore surfaces as a WARNING toast within a second of
+      the click instead of as a confusing failure at Run — and a doubled
+      extension resolves silently and correctly. `getFrameSize()` is the one
+      remaining unproven read in the frame path; when both it and
+      `getSettings()` fail the panel now dumps `Sequence`'s own and prototype
+      property names, so the real method name arrives in the same log.
+  - [ ] **S7-c — clip read (`Clip → ComfyUI`).** The whole chain is
+    documented and executed verbatim in Adobe's own sample
+    (`sequence.getSelection()` → `.getTrackItems()` → `item.getProjectItem()`
+    RAW → `pr.ClipProjectItem.cast(raw)` → `.getMediaFilePath()`, plus
+    `getInPoint()`/`getOutPoint()` for SOURCE in/out), so no probe gates the
+    BUILD — but four things the 26.3 docs are silent on can only be answered
+    live, and the panel logs each so one owner run settles them:
+    - whether `getSelection()` sees the Timeline selection at all once focus
+      moves into the UXP panel, and whether `getIsSelected()` (no Adobe
+      sample exercises it) answers on real track items. v0.10.0 makes the
+      empty-selection path SELF-DIAGNOSING rather than merely instructive: it
+      logs what each route saw (items returned by `getSelection()`; tracks
+      walked, clips examined and how many could answer `getIsSelected()`) and
+      asks for the log back if a clip IS selected — so one click settles this
+      instead of dead-ending on "nothing is selected";
+    - whether a linked A/V click returns one track item or two, and in what
+      order (there is no static `.cast()` on either track-item class; the
+      video one is duck-typed on `createAddVideoTransitionAction`);
+    - whether `getInPoint()` is file-relative or absolute source timecode on
+      media whose Media Start is NOT `00:00:00:00` (R3D/MXF/broadcast).
+      Adobe's own sample COMMENT says file-relative — exactly what PyAV
+      wants — but a comment is not a spec, so test one such clip before
+      trusting the trim;
+    - whether a SUBCLIP's in/out is relative to the subclip or the original
+      file, while `getMediaFilePath()` still returns the full file;
+    - whether `getOutPoint()` is INCLUSIVE or EXCLUSIVE — undocumented, and
+      the backend commits to EXCLUSIVE so `Get Shot`'s
+      `frame_count = out - in` comes out right. v0.10.0 logs `in`, `out`,
+      `frame_count` and `source_fps` at INFO on EVERY clip run, so one
+      comparison against Premiere's own clip-duration readout settles it. If
+      it turns out inclusive the fix is confined to `build_clip_shot`'s two
+      `round(seconds * fps)` lines plus a §11.7 amendment.
+    - whether the Timeline selection survives focus moving into the UXP
+      panel (no selection-changed event exists on 26.3, so the panel reads
+      selection at click time and falls back to a `getIsSelected()` sweep —
+      saying WHICH route it used, and reporting what BOTH routes saw when
+      neither finds anything. There is deliberately no playhead or
+      project-panel fallback: both would guess at what the user meant).
+    Note the mirror-image cast lesson: the 2026-07-25 insert-at-playhead
+    result proved a cast wrapper is REJECTED as an argument, while here the
+    cast is MANDATORY because `ProjectItem` has no `getMediaFilePath`. Keep
+    both handles. **CHECKS THIS BOX:** a clip sent to ComfyUI whose decoded
+    range matches what the Timeline shows, plus the invariant
+    `(out-in) ≈ timeline duration × speed` holding in the panel log.
 
 ## LIVE RESULTS
 

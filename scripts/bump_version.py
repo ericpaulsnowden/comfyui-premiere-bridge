@@ -68,6 +68,19 @@ def _targets(repo_root: Path) -> list[_Target]:
             re.compile(rf"(FRONTEND_VERSION\s*=\s*')({_VERSION})(')"),
             "web/cprb/version.js",
         ),
+        # The UXP plugin's own version. It belongs here for the same reason as
+        # the other three, and belonged here from the start: connection.js
+        # compares plugin vs server at every handshake and paints the ADVANCED
+        # version line AMBER on a mismatch, so a manifest left behind turns
+        # every connection into a false "one side is stale" warning. It was
+        # bumped by hand through v0.9.x and drifted at v0.10.0 -- exactly the
+        # partial-bump failure the refuse-on-disagreement rule below exists to
+        # prevent, just in a file the script could not see.
+        _Target(
+            repo_root / "premiere_plugin" / "manifest.json",
+            re.compile(rf'(?m)^(\s*"version":\s*")({_VERSION})(")'),
+            "premiere_plugin/manifest.json",
+        ),
     ]
 
 

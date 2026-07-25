@@ -34,6 +34,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
+from typing import Any
 
 import aiohttp
 from aiohttp import web
@@ -288,6 +289,143 @@ def _parse_extensions(raw: str) -> tuple[str, ...]:
 #: time — forever. Same rationale as cpsb's `_TIER2_SEND_TIMEOUT_SECONDS`.
 _PUSH_SEND_TIMEOUT_SECONDS = 5.0
 
+#: How long the handshake waits for the frames directory to be prepared
+#: before answering anyway (PROTOCOL.md §11.1). Generous for a local disk,
+#: short enough that an unreachable share costs a pause rather than the
+#: connection.
+_FRAMES_DIR_TIMEOUT_SECONDS = 5.0
+
+#: How long §11.2's server-side existence check may take before the relay
+#: goes out unverified. Same reasoning as above: one ``stat`` on a live share
+#: is microseconds; on a dead one it must not hold up the message.
+_EXPORT_STAT_TIMEOUT_SECONDS = 5.0
+
+#: PROTOCOL.md §11: the folder the Premiere plugin writes its frame exports
+#: into, reported to the plugin as ``hello_ack.frames_dir``. It lives under
+#: ComfyUI's INPUT directory (not the output tree) on purpose: these files
+#: are material coming IN to a graph, and ComfyUI can always read its own
+#: input dir. Sibling naming to §2's ``premiere_timelines`` and §10.5's
+#: ``premiere_results``, both of which are output-side.
+FRAMES_DIRNAME = "premiere_frames"
+
+#: Environment override for :func:`resolve_frames_dir` (PROTOCOL.md §11.1).
+#: The default lives under ComfyUI's input dir, which on a real install is
+#: often a NAS/UNC share — and whether Premiere's exporter can write a PNG
+#: over SMB is not something this pack can prove for every setup. Without an
+#: escape hatch a share that refuses the write bricks "Frame → ComfyUI"
+#: outright, since the plugin correctly refuses to invent a path. Same
+#: precedent as §3.2's ``output_dir`` override on ``PremiereSaveTimeline``:
+#: an ABSOLUTE path is honored, anything else is ignored with a log line.
+FRAMES_DIR_ENV = "CPRB_FRAMES_DIR"
+
+#: How many exported stills :func:`ensure_frames_dir` keeps (PROTOCOL.md
+#: §11.1). Every "Frame → ComfyUI" click writes a NEW uniquely-named still at
+#: full sequence resolution — unique names are required (reusing one races
+#: with Premiere still writing the previous file, §11.7), which is exactly
+#: what stops the folder ever self-limiting. A 4K PNG is 10-25 MB, so an
+#: afternoon of testing is otherwise a gigabyte of orphans in ComfyUI's input
+#: tree. 200 is far more than any session revisits.
+FRAMES_KEEP_NEWEST = 200
+
+
+def resolve_frames_dir(context: BridgeContext) -> Path:
+    """Where the panel writes its frame exports — computed, NOT created.
+
+    ``$CPRB_FRAMES_DIR`` when it is set to an ABSOLUTE path, else
+    ``<input_dir>/premiere_frames/``. A non-absolute override is ignored with
+    a log line rather than raising — same posture as
+    ``PremiereSaveTimeline``'s ``output_dir`` (§3.2), which is the pack's own
+    precedent for "redirect this somewhere the host can actually write".
+
+    Split from :func:`ensure_frames_dir` for the same reason
+    :meth:`~cprb.context.BridgeContext.resolve_timeline_dir` is split from
+    ``timeline_dir``: asking where the folder is must not be the thing that
+    creates it.
+    """
+    override = os.environ.get(FRAMES_DIR_ENV, "").strip()
+    if override:
+        candidate = Path(override)
+        if candidate.is_absolute():
+            return candidate
+        logger.warning(
+            "cprb: ignoring %s=%r — it must be an ABSOLUTE path; using %s instead",
+            FRAMES_DIR_ENV,
+            override,
+            context.input_dir / FRAMES_DIRNAME,
+        )
+    return context.input_dir / FRAMES_DIRNAME
+
+
+def _prune_frames_dir(directory: Path, keep: int = FRAMES_KEEP_NEWEST) -> int:
+    """Delete all but the *keep* newest ``*.png`` in *directory*.
+
+    Returns how many files were removed. Every failure is swallowed: this is
+    housekeeping on the way to answering a handshake, and a share that won't
+    let us stat or unlink must not cost the user their connection.
+    """
+    try:
+        stamped = []
+        for entry in directory.glob("*.png"):
+            try:
+                stamped.append((entry.stat().st_mtime_ns, entry))
+            except OSError:
+                continue
+    except OSError:
+        return 0
+    if len(stamped) <= keep:
+        return 0
+    stamped.sort(key=lambda pair: pair[0], reverse=True)
+    removed = 0
+    for _mtime, entry in stamped[keep:]:
+        try:
+            entry.unlink()
+            removed += 1
+        except OSError:
+            continue
+    if removed:
+        logger.info(
+            "cprb: pruned %d old frame export(s) from %s (keeping the %d newest)",
+            removed,
+            directory,
+            keep,
+        )
+    return removed
+
+
+def ensure_frames_dir(context: BridgeContext) -> Path:
+    """:func:`resolve_frames_dir`, created and pruned (PROTOCOL.md §11.1).
+
+    The plugin must be able to write into this folder the instant it
+    finishes handshaking -- Premiere's ``Exporter.exportSequenceFrame`` does
+    NOT create its output directory and simply reports failure if it is
+    missing, and the plugin (``localFileSystem: "request"``) cannot create
+    one for a path the user never picked in a folder dialog. So the server
+    creates it, on demand, at ``hello`` (:func:`_handle_plugin_message`).
+
+    A creation failure is logged and NOT raised: the handshake matters more
+    than the folder, and reporting the resolved path anyway keeps the
+    failure diagnosable (the plugin's own export error will name it, and
+    ``PremiereFrameSource.VALIDATE_INPUTS`` says the file is missing) rather
+    than silently handing the plugin nowhere to write.
+
+    BLOCKING (``mkdir``/``glob``/``unlink``), so callers on the event loop
+    must hand this to a thread — the default folder can be a UNC share, and
+    a sleeping share would otherwise stall all of ComfyUI for the SMB
+    timeout. :func:`_handle_plugin_message` does exactly that.
+    """
+    directory = resolve_frames_dir(context)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.exception(
+            "cprb: could not create the Premiere frames directory %s — "
+            "frame exports from the panel will fail until it exists",
+            directory,
+        )
+        return directory
+    _prune_frames_dir(directory)
+    return directory
+
 
 @dataclass
 class PluginConnection:
@@ -330,6 +468,68 @@ def _running_on_push_loop(loop: asyncio.AbstractEventLoop) -> bool:
         return False
 
 
+def _stat_export_path(kind: Any, raw_path: Any) -> dict[str, Any]:
+    """Blocking half of :func:`_verify_export_path` — one or two ``stat``s."""
+    from .nodes_source import resolve_frame_path
+
+    text = str(raw_path or "").strip()
+    if not text:
+        return {"path_exists": False}
+    if kind == "frame":
+        # Only a frame gets the doubled-extension fallback: that defect is
+        # `exportSequenceFrame`'s alone (§11.7). A clip's path is Premiere's
+        # own media file and must be taken literally.
+        resolved = resolve_frame_path(text)
+        if resolved is None:
+            return {"path_exists": False}
+        return {"path_exists": True, "resolved_path": str(resolved)}
+    try:
+        exists = Path(text).is_file()
+    except OSError:
+        exists = False
+    return {"path_exists": exists}
+
+
+async def _verify_export_path(payload: dict[str, Any]) -> dict[str, Any]:
+    """§11.2's server-side existence check: ``path_exists`` (+ ``resolved_path``).
+
+    This is the ONLY hop that both sees the message and can look at the disk.
+    The panel cannot: ``localFileSystem: "request"`` grants access only to
+    entries the user picked in a dialog, so its own probe answers "cannot
+    tell" for a path under ComfyUI's input dir — which makes its whole
+    retry-under-a-fresh-name ladder unreachable on a real install. Meanwhile
+    ``exportSequenceFrame`` is documented to return ``true`` and sometimes
+    write nothing (§11.7). Without this check the panel says "sent", the
+    frontend toasts "press Run when ready", and the user only learns at Run
+    time — from advice ("click Frame → ComfyUI again") that would loop
+    forever, because nothing upstream can detect the failure.
+
+    Two additive fields, never a rewrite of what the plugin sent, so §11.3's
+    relay stays verbatim in spirit: the frontend chooses whether to use them.
+    Off the loop and bounded, for :func:`ensure_frames_dir`'s reasons — a
+    ``stat`` against a dead share must not stall ComfyUI. On timeout the
+    fields are simply absent, and the frontend treats an absent
+    ``path_exists`` as "unverified" rather than "missing".
+    """
+    kind = payload.get("kind")
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_stat_export_path, kind, payload.get("path")),
+            timeout=_EXPORT_STAT_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "cprb: checking whether %r exists took longer than %.0fs — relaying it "
+            "unverified",
+            payload.get("path"),
+            _EXPORT_STAT_TIMEOUT_SECONDS,
+        )
+        return {}
+    except OSError:
+        logger.exception("cprb: could not check whether %r exists", payload.get("path"))
+        return {}
+
+
 async def _handle_plugin_message(
     context: BridgeContext, connection: PluginConnection, raw: str
 ) -> None:
@@ -349,7 +549,43 @@ async def _handle_plugin_message(
 
     if msg_type == "hello":
         connection.plugin_version = msg.get("plugin_version")
-        await connection.ws.send_json({"type": "hello_ack", "server_version": __version__})
+        # PROTOCOL.md §11 adds ONE additive field to §10.2's hello_ack:
+        # `frames_dir`, the absolute folder the plugin exports frames into,
+        # created here on demand so it is writable the moment the plugin
+        # needs it. Additive per §8 — an M1 plugin that ignores the field
+        # keeps working unchanged.
+        #
+        # OFF THE EVENT LOOP, and bounded: ensure_frames_dir does real disk
+        # work (mkdir + a prune pass) and the default folder lives under
+        # ComfyUI's input dir, which on a real install is often a NAS/UNC
+        # share. A blocking mkdir against a sleeping share would stall the
+        # whole aiohttp loop for the SMB timeout — every HTTP request, the
+        # frontend websocket, queue progress — and present as "ComfyUI froze
+        # when I connected the Premiere panel". So: a thread, a timeout, and
+        # the resolved path reported either way (§11.1's log-and-report).
+        frames_dir = resolve_frames_dir(context)
+        try:
+            frames_dir = await asyncio.wait_for(
+                asyncio.to_thread(ensure_frames_dir, context),
+                timeout=_FRAMES_DIR_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "cprb: preparing the Premiere frames directory %s took longer than %.0fs "
+                "(a slow or unreachable share?) — answering the handshake anyway; set %s "
+                "to a local absolute path to redirect frame exports",
+                frames_dir,
+                _FRAMES_DIR_TIMEOUT_SECONDS,
+                FRAMES_DIR_ENV,
+            )
+        logger.info("cprb: Premiere frames directory is %s", frames_dir)
+        await connection.ws.send_json(
+            {
+                "type": "hello_ack",
+                "server_version": __version__,
+                "frames_dir": str(frames_dir),
+            }
+        )
     elif msg_type == "ready":
         connection.ready = True
         logger.info(
@@ -360,13 +596,46 @@ async def _handle_plugin_message(
         # slots in without a plugin-side change; M1 sends no pings.
         pass
     elif msg_type == "export_ready":
-        # §10.4: M2's inbound half, accepted now because it's cheap and the
-        # message schema is the plugin's to start emitting. Relayed to the
-        # frontend verbatim minus `type`; the consuming listener ships with
-        # M2, so today this is log-visible only.
+        # §10.4 accepted this message in M1; §11 fixes its payload schema and
+        # ships the consuming frontend listener (`web/cprb/premiere_source.js`,
+        # which writes the payload into `PremiereFrameSource` /
+        # `PremiereClipSource`'s hidden widgets):
+        #
+        #   kind    "frame" | "clip"
+        #   path    absolute — the exported still, or (kind=clip) the clip's
+        #           OWN media file: no export, no re-encode
+        #   label   human name (sequence or clip) for toasts/logs
+        #   frame   ticks (string) + seconds (number) it came from
+        #   clip    start_seconds + end_seconds (the clip's in/out in its
+        #           SOURCE media)
+        #
+        # The relay is VERBATIM (everything except `type`) and stays
+        # schema-agnostic on purpose: §8's additive rule means a later
+        # plugin may send fields this server has never heard of, and the
+        # frontend — not this hop — is what decides which of them it uses.
+        # This hop adds exactly TWO fields of its own (§11.2) and rewrites
+        # nothing.
         payload = {key: value for key, value in msg.items() if key != "type"}
+        payload.update(await _verify_export_path(payload))
         logger.info("cprb: plugin export_ready: %s", payload)
-        if context.send_event is not None:
+        if payload.get("path_exists") is False:
+            logger.warning(
+                "cprb: the panel reported a %r export at %r but nothing is on disk "
+                "there — Premiere's exporter can report success without writing "
+                "(PROTOCOL.md §11.7)",
+                payload.get("kind"),
+                payload.get("path"),
+            )
+        if context.send_event is None:
+            # Only reachable in tests and in a torn-down server: __init__.py
+            # always wires send_event. Said out loud because the panel has
+            # already told the user "sent" by this point.
+            logger.warning(
+                "cprb: no frontend event sink — export_ready was received but cannot "
+                "reach any ComfyUI tab; the file is on disk at %r",
+                payload.get("path"),
+            )
+        else:
             context.send_event("cprb.export_ready", payload)
     else:
         logger.debug("cprb: ignoring unknown plugin message type: %r", msg_type)

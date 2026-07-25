@@ -106,7 +106,14 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
  * never carry wrapping quotes, so for them this is just a trim -- harmless,
  * and it keeps ONE path-cleanup rule for every path that enters the recipe. */
 function cleanImportPath(raw) {
-  let path = (raw || '').trim();
+  // String(...) not just `raw || ''`: every path in BOTH directions passes
+  // through here, including `getMediaFilePath()`'s return. If a build ever
+  // hands back a non-string (a host object, a promise-like wrapper), `.trim`
+  // would be undefined and the TypeError would sail past the caller's named
+  // "has no media file on disk" error into a stack-shaped one. Identical
+  // behaviour for every string caller; a non-string degrades to '' and gets
+  // the named error instead.
+  let path = String(raw || '').trim();
   if (
     path.length >= 2 &&
     ((path[0] === '"' && path[path.length - 1] === '"') ||
