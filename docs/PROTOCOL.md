@@ -547,7 +547,19 @@ summary: per file, `Sent to Premiere: <path>` or `Plugin not connected —
 import manually: <path>`, with any notes (temp-copy, trim, batched image)
 indented beneath. No plugin connected is NOT an error — §1's ethos:
 ComfyUI-only must work; the plugin is a better version, never the only
-version. `OUTPUT_NODE = True`; no `IS_CHANGED` override.
+version. `OUTPUT_NODE = True`.
+
+`IS_CHANGED` (since v0.9.7) returns this node's MONOTONIC failed-delivery
+count, so a push that never reached Premiere earns exactly ONE retry on the
+next queue and a successful one leaves the node cached. Owner bug: a run made
+while Premiere was closed wrote the file, failed the push, and was then
+cached as done — "the plugin wasn't sending videos into Pr until after I
+reset the node even though the plugin was connected". Whether a push can
+succeed depends on state outside every input (is a panel connected right
+now?), which is exactly what `IS_CHANGED` is for. The count is deliberately
+never reset: an always-dirty token instead produced one EXTRA run when a
+retry succeeded (recovering from it is itself a change), i.e. a duplicate
+clip in the bin — caught by a live round-trip test, not by unit tests.
 
 ### §10.6 `cprb.send_result` (server → ComfyUI frontend)
 
@@ -563,8 +575,13 @@ it directly):
 WHY it exists: the node's `ui.text` summary is not rendered by anything in
 ComfyUI, so a run whose push failed looked identical to one that worked
 (owner, 2026-07-24: "The run finished, but I didn't see a message anywhere
-that it didn't work"). `web/cprb/send_result.js` turns this event into a
-toast — a short info one on success, and on failure a long-lived WARNING
+that it didn't work"). Since v0.9.7 the payload also carries `node_id` (from
+the node's hidden `UNIQUE_ID`), because the owner reported the same blindness
+a SECOND time on 2026-07-25: a toast depends on the host frontend having a
+working toast surface and on the user looking at that moment, and it vanishes
+either way. So the AUTHORITATIVE surface is now a persistent status line
+painted on the node that did the work; the toast is the glanceable extra.
+`web/cprb/send_result.js` does both — a short info one on success, and on failure a long-lived WARNING
 carrying the full path, because the user's next action is to import that
 file by hand. Failure to emit or render is swallowed: a UI notification
 never fails a finished run.

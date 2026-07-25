@@ -668,70 +668,11 @@ async function setColorLabel(pr, project, item, colorName) {
 
 /* ----------------------- step: insert at playhead ---------------------- */
 
-/** Sorted own-property names of a value's prototype -- the "log the real
- * method list" trick S7 used on EncoderManager. null when unreadable. */
-function cprbProtoNames(value) {
-  try {
-    return Object.getOwnPropertyNames(Object.getPrototypeOf(value)).sort();
-  } catch (_) {
-    return null;
-  }
-}
-
-/** Constructor name of a value, or its typeof when unreadable. */
-function cprbCtorName(value) {
-  try {
-    if (value && value.constructor && value.constructor.name) return value.constructor.name;
-  } catch (_) { /* fall through */ }
-  return typeof value;
-}
-
-/** One compact diagnostic line for a TickTime-ish object: constructor, own
- * property names, ticks/seconds/ticksNumber when present, prototype names. */
-function cprbDescribeTick(tick) {
-  const parts = [`ctor=${cprbCtorName(tick)}`];
-  try {
-    parts.push(`own=[${Object.getOwnPropertyNames(tick).sort().join(',')}]`);
-  } catch (_) { /* own names unreadable */ }
-  for (const key of ['ticks', 'seconds', 'ticksNumber']) {
-    try {
-      const value = tick ? tick[key] : undefined;
-      if (value !== undefined) parts.push(`${key}=${JSON.stringify(value)}`);
-    } catch (error) {
-      parts.push(`${key} threw (${cprbErrMsg(error)})`);
-    }
-  }
-  const proto = cprbProtoNames(tick);
-  if (proto) parts.push(`proto=[${proto.join(',')}]`);
-  return parts.join(' ');
-}
-
-/** A zero TickTime from whatever this build actually offers. Adobe's own
- * sample uses TickTime.TIME_ZERO, which the TickTime doc page does not even
- * list -- so enumerate/probe, never assume. null when nothing matched. */
-function cprbZeroTick(pr) {
-  try {
-    const zero = pr.TickTime ? pr.TickTime.TIME_ZERO : undefined;
-    if (zero && typeof zero === 'object') return { tick: zero, via: 'TickTime.TIME_ZERO' };
-  } catch (_) { /* next creator */ }
-  try {
-    if (pr.TickTime && typeof pr.TickTime.createWithSeconds === 'function') {
-      const tick = pr.TickTime.createWithSeconds(0);
-      if (tick) return { tick, via: 'TickTime.createWithSeconds(0)' };
-    }
-  } catch (_) { /* next creator */ }
-  try {
-    if (pr.TickTime && typeof pr.TickTime.createWithTicks === 'function') {
-      const tick = pr.TickTime.createWithTicks('0');
-      if (tick) return { tick, via: "TickTime.createWithTicks('0')" };
-    }
-  } catch (_) { /* none */ }
-  return null;
-}
-
 /** Clip count on video track `index`, or null when unreadable (missing
- * Constants.TrackItemType, no track handle, or a throw). The probe's
- * read-back: a landed overwrite/insert raises the target track's count. */
+ * Constants.TrackItemType, no track handle, or a throw). The READ-BACK: a
+ * landed overwrite raises the target track's count. Kept from the v0.9.6
+ * probe because a transaction reporting success is not proof anything
+ * actually landed -- the properties step earned that rule the hard way. */
 async function cprbCountClipsOnTrack(pr, sequence, index) {
   try {
     if (!pr.Constants || !pr.Constants.TrackItemType || pr.Constants.TrackItemType.CLIP === undefined) {
@@ -747,62 +688,47 @@ async function cprbCountClipsOnTrack(pr, sequence, index) {
 }
 
 /**
- * DIAGNOSTIC PROBE (since the owner's 2026-07-24 live run; runs only when
- * the message says `insert_at_playhead: true`, which the node defaults
- * OFF). That run proved the surface EXISTS on 26.3 -- getEditor returned an
- * editor whose createOverwriteItemAction is a function -- but every shipped
- * shape, `createOverwriteItemAction(castClip, playheadTick, videoIndex, 0)`
- * for video index trackCount and trackCount-1, threw "Invalid parameter."
- * (~6 attempts, PNG and .m4v alike; nothing reached the timeline).
- * Premiere's bindings distinguish arity from type errors ("Not Enough
- * Parameters" vs "Invalid parameter.", per the S7 log), so the call had the
- * right argument COUNT and at least one argument has a wrong TYPE or value.
+ * Overwrites the imported item onto the active sequence at the playhead, on
+ * the topmost existing video track. Runs only when the message says
+ * `insert_at_playhead: true` (the node's widget defaults OFF).
  *
- * So, S7-style: FIRST log the real surface (editor prototype, arities,
- * TickTime statics, the playhead object, item constructor names, track
- * counts and how they were read), THEN try shapes that each change ONE
- * suspect argument relative to the shipped baseline, stopping at the first
- * that VERIFIABLY lands (target track's clip count read back). Ranked
- * suspects, from research (research/premiere-tier2/r2 §3.1; Adobe's own
- * sequenceEditor.ts sample; community production code):
- *   1. audioTrackIndex 0 for audio-less media -- bridge results are stills
- *      and often audio-less renders; shipped multicam code passes -1
- *      ("leave audio alone") to createOverwriteItemAction.
- *   2. the ClipProjectItem.cast(...) wrapper -- Adobe's sample feeds
- *      SequenceEditor actions RAW ProjectItems (from selection /
- *      getItems()), never a cast wrapper.
- *   3. the playhead TickTime -- getPlayerPosition() is a proven READ
- *      (S6-D) but no Adobe sample feeds it back into an action (the sample
- *      inserts at TickTime.TIME_ZERO; r2 flags playhead+insert as INFERRED
- *      only -- the exact inference that is failing).
- *   4. the video index -- least likely (two different existing indices
- *      threw identically), but 0 is the most certainly-valid index. Note
- *      the docs promise index>count auto-creates a track for
- *      createInsertProjectItemAction ONLY, so this probe never targets a
- *      not-yet-existing track (the shipped code's trackCount attempt did).
- * Shapes that would land AWAY from the playhead/topmost track by design
- * (the TIME_ZERO / V1 isolation shapes) run LAST and their success log
- * says exactly where the clip went and that one Edit > Undo removes it.
- * VERIFY(spike-S6-followup): the next live run's winning shape retires
- * this probe -- every losing branch then gets deleted.
+ * PROVEN on 26.3 (owner live run 2026-07-25) -- the v0.9.6 probe tried nine
+ * one-variable-at-a-time shapes and this is the exact one that landed:
  *
- * Safety posture unchanged: each attempt is its own lockedAccess +
- * executeTransaction (REQUIRED on 26.3) under the ONE label "Insert ComfyUI
- * result at playhead"; a throw happens during action CREATION, before
- * anything is added to the compound, so a failed attempt cannot leave a
- * half-applied edit (proven live: six failures, imports untouched); a
- * success is exactly one labeled undo step; the completed import is never
- * touched; and when the track count is unreadable it SKIPS rather than
- * guess.
+ *     editor.createOverwriteItemAction(RAW ProjectItem, playheadTickTime,
+ *                                      videoTrackIndex, 0)
+ *
+ * inside `lockedAccess` + `executeTransaction`. Read-back confirmed the
+ * target track's clip count 0 -> 1 at the playhead.
+ *
+ * THE ONE THING THAT MATTERED: the item must be the **RAW `ProjectItem`**
+ * straight off the bin enumeration -- passing the `ClipProjectItem.cast(...)`
+ * wrapper (which every other step in this file uses happily, and which works
+ * fine as an action FACTORY, e.g. `createSetColorLabelAction`) threw
+ * "Invalid parameter." every time. Adobe's own sequenceEditor.ts sample
+ * passes raw items too. `audioTrackIndex = 0` was never the problem; the -1
+ * "touch no audio track" variant was not needed. Every other probe branch is
+ * deleted -- keeping them would only re-litigate a settled question.
+ *
+ * Still defensive about the things the probe did NOT settle: the track count
+ * has two possible readers, and with NO readable count this SKIPS rather than
+ * guessing an index (an overwrite onto a wrongly-guessed track destroys
+ * content). Fail-soft throughout: a failure here never touches the
+ * already-successful import.
  */
-async function insertAtPlayhead(pr, project, clip, rawItem) {
+async function insertAtPlayhead(pr, project, rawItem) {
   try {
-    const sequence = await project.getActiveSequence();
-    if (!sequence) {
-      log('insert: no active sequence -- skipped', 'dim');
+    if (!rawItem) {
+      log('insert: no raw ProjectItem handle recovered for this import -- skipped '
+        + '(the cast ClipProjectItem is rejected by createOverwriteItemAction)', 'dim');
       return;
     }
-    const position = await sequence.getPlayerPosition(); // PROVEN read (S6-D)
+    const sequence = await project.getActiveSequence();
+    if (!sequence) {
+      log('insert: no active sequence -- skipped (the clip is still in the bin)', 'dim');
+      return;
+    }
+    const position = await sequence.getPlayerPosition();
     if (!pr.SequenceEditor || typeof pr.SequenceEditor.getEditor !== 'function') {
       log('insert: no SequenceEditor.getEditor on this build -- skipped', 'dim');
       return;
@@ -813,7 +739,9 @@ async function insertAtPlayhead(pr, project, clip, rawItem) {
       return;
     }
 
-    // -- track counts (with NO readable video count, skip -- never guess) --
+    // Topmost EXISTING video track. Two readers, because only
+    // getVideoTrackCount() is proven; with neither readable we skip rather
+    // than guess (see the docblock).
     let trackCount = null;
     let countVia = '';
     try {
@@ -824,170 +752,62 @@ async function insertAtPlayhead(pr, project, clip, rawItem) {
     } catch (error) {
       logDebug(`insert: getVideoTrackCount threw: ${cprbErrMsg(error)}`);
     }
-    if (trackCount === null || typeof trackCount !== 'number') {
+    if (typeof trackCount !== 'number') {
       try {
         const tracks = sequence.videoTracks;
         if (tracks && typeof tracks.length === 'number') {
           trackCount = tracks.length;
           countVia = 'videoTracks.length';
         }
-      } catch (_) { /* no second shape either */ }
+      } catch (_) { /* no second reader either */ }
     }
     if (typeof trackCount !== 'number' || !(trackCount >= 1)) {
-      log('insert: no usable video track count -- skipped rather than guess a track', 'dim');
+      log('insert: could not read the video track count -- skipped rather than guess a track', 'dim');
       return;
     }
-    let audioCount = '?';
+    const videoTrackIndex = trackCount - 1;
+
+    const before = await cprbCountClipsOnTrack(pr, sequence, videoTrackIndex);
+    let txnOk = false;
     try {
-      if (typeof sequence.getAudioTrackCount === 'function') {
-        audioCount = String(await sequence.getAudioTrackCount());
-      }
-    } catch (_) { /* diagnostic only */ }
-
-    // ---- probe stage 1: the REAL surface, before calling anything ----
-    const editorProto = cprbProtoNames(editor);
-    logDebug(`insert probe: editor proto: ${editorProto ? JSON.stringify(editorProto) : 'unreadable'}`);
-    const arities = ['createOverwriteItemAction', 'createInsertProjectItemAction'].map((name) => {
-      try {
-        const fn = editor[name];
-        return `${name}.length=${typeof fn === 'function' ? fn.length : 'ABSENT'}`;
-      } catch (error) {
-        return `${name} unreadable (${cprbErrMsg(error)})`;
-      }
-    });
-    logDebug(`insert probe: arities: ${arities.join(', ')}`);
-    let tickStatics = null;
-    try { tickStatics = Object.getOwnPropertyNames(pr.TickTime).sort(); } catch (_) { /* unreadable */ }
-    const zero = cprbZeroTick(pr);
-    logDebug(`insert probe: TickTime statics: ${tickStatics ? JSON.stringify(tickStatics) : 'unreadable'}; zero-time source: ${zero ? zero.via : 'NONE matched -- zero-time shapes skipped'}`);
-    logDebug(`insert probe: playhead: ${cprbDescribeTick(position)}`);
-    let rawArg = rawItem || null;
-    let rawVia = 'bin-enumeration handle';
-    if (!rawArg && pr.ProjectItem && typeof pr.ProjectItem.cast === 'function') {
-      try {
-        rawArg = pr.ProjectItem.cast(clip);
-        rawVia = 'ProjectItem.cast(clip)';
-      } catch (_) { /* stays null */ }
-    }
-    logDebug(`insert probe: item: cast ctor=${cprbCtorName(clip)}; raw=${rawArg ? `ctor=${cprbCtorName(rawArg)} via ${rawVia}` : 'UNAVAILABLE -- raw-item shapes skipped'}`);
-    const vTop = trackCount - 1;
-    logDebug(`insert probe: tracks: video ${trackCount} via ${countVia}, audio ${audioCount}; target = topmost existing V${vTop + 1} (index ${vTop}), audio index 0 / -1`);
-
-    // ---- probe stage 2: one-variable-at-a-time shapes, first hit wins ----
-    const haveInsert = typeof editor.createInsertProjectItemAction === 'function';
-    const shapes = [];
-    shapes.push({
-      name: `overwrite(cast clip, playhead, V${vTop + 1}, audio 0) [shipped shape]`,
-      videoIndex: vTop,
-      wrongPlace: '',
-      make: () => editor.createOverwriteItemAction(clip, position, vTop, 0)
-    });
-    shapes.push({
-      name: `overwrite(cast clip, playhead, V${vTop + 1}, audio -1) [-1 = touch no audio track]`,
-      videoIndex: vTop,
-      wrongPlace: '',
-      make: () => editor.createOverwriteItemAction(clip, position, vTop, -1)
-    });
-    if (rawArg) {
-      shapes.push({
-        name: `overwrite(RAW ProjectItem, playhead, V${vTop + 1}, audio 0)`,
-        videoIndex: vTop,
-        wrongPlace: '',
-        make: () => editor.createOverwriteItemAction(rawArg, position, vTop, 0)
+      project.lockedAccess(() => {
+        txnOk = project.executeTransaction((compound) => {
+          // Created INSIDE the lock/transaction, per the 26.3 rule.
+          compound.addAction(
+            editor.createOverwriteItemAction(rawItem, position, videoTrackIndex, 0)
+          );
+        }, 'Insert ComfyUI result at playhead');
       });
-      shapes.push({
-        name: `overwrite(RAW ProjectItem, playhead, V${vTop + 1}, audio -1)`,
-        videoIndex: vTop,
-        wrongPlace: '',
-        make: () => editor.createOverwriteItemAction(rawArg, position, vTop, -1)
-      });
-    }
-    if (haveInsert) {
-      shapes.push({
-        name: `INSERT(cast clip, playhead, V${vTop + 1}, audio 0, limitShift=true) [createInsertProjectItemAction]`,
-        videoIndex: vTop,
-        wrongPlace: '',
-        make: () => editor.createInsertProjectItemAction(clip, position, vTop, 0, true)
-      });
-    }
-    if (zero) {
-      shapes.push({
-        name: `overwrite(cast clip, ${zero.via}, V${vTop + 1}, audio 0) [isolates the playhead argument]`,
-        videoIndex: vTop,
-        wrongPlace: 'the sequence START, not the playhead',
-        make: () => editor.createOverwriteItemAction(clip, zero.tick, vTop, 0)
-      });
-    }
-    if (vTop !== 0) {
-      shapes.push({
-        name: 'overwrite(cast clip, playhead, V1, audio 0) [isolates the track index]',
-        videoIndex: 0,
-        wrongPlace: 'track V1, not the topmost',
-        make: () => editor.createOverwriteItemAction(clip, position, 0, 0)
-      });
-    }
-    if (rawArg && zero) {
-      shapes.push({
-        name: `overwrite(RAW ProjectItem, ${zero.via}, V1, audio -1) [kitchen sink]`,
-        videoIndex: 0,
-        wrongPlace: 'the sequence START on V1',
-        make: () => editor.createOverwriteItemAction(rawArg, zero.tick, 0, -1)
-      });
-      if (haveInsert) {
-        shapes.push({
-          name: `INSERT(RAW ProjectItem, ${zero.via}, V1, audio -1, limitShift=true) [kitchen sink]`,
-          videoIndex: 0,
-          wrongPlace: 'the sequence START on V1',
-          make: () => editor.createInsertProjectItemAction(rawArg, zero.tick, 0, -1, true)
-        });
-      }
-    }
-
-    for (const shape of shapes) {
-      const before = await cprbCountClipsOnTrack(pr, sequence, shape.videoIndex);
-      let txnOk = false;
-      try {
-        project.lockedAccess(() => {
-          txnOk = project.executeTransaction((compound) => {
-            // Created INSIDE the transaction/lock, per the 26.3 rule; a
-            // throw here aborts before any action joins the compound.
-            compound.addAction(shape.make());
-          }, 'Insert ComfyUI result at playhead');
-        });
-      } catch (error) {
-        // Every exact throw message is the spike data.
-        logDebug(`insert probe: ${shape.name} threw: ${cprbErrMsg(error)}`);
-        continue;
-      }
-      if (!txnOk) {
-        logDebug(`insert probe: ${shape.name}: transaction returned false`);
-        continue;
-      }
-      // The transaction claims success -- read back before believing it
-      // (the properties step earned that rule).
-      let after = await cprbCountClipsOnTrack(pr, sequence, shape.videoIndex);
-      if (before !== null && after === before) {
-        await sleep(400); // in case the edit lands a beat later
-        after = await cprbCountClipsOnTrack(pr, sequence, shape.videoIndex);
-      }
-      if (before === null || after === null) {
-        ok(`insert: transaction succeeded via ${shape.name} -- clip-count read-back unavailable, so CHECK THE TIMELINE${shape.wrongPlace ? `; NOTE this isolation shape targeted ${shape.wrongPlace} -- one Edit > Undo step removes it` : ''}`);
-        log('insert probe: paste this run\'s log back -- the winning shape above becomes the only branch', 'dim');
-        return;
-      }
-      if (after > before) {
-        ok(`insert: SUCCESS via ${shape.name} -- V${shape.videoIndex + 1} clip count ${before} -> ${after}${shape.wrongPlace ? `; NOTE this isolation shape landed at ${shape.wrongPlace} -- one Edit > Undo step removes it` : ', at the playhead'}`);
-        log('insert probe: paste this run\'s log back -- the winning shape above becomes the only branch', 'dim');
-        return;
-      }
-      // txnOk yet the track shows nothing new: either a silent false
-      // success, or an exact-overlap overwrite REPLACED a clip (count
-      // unchanged). Ambiguous -- stop here rather than risk stacking a
-      // second real edit on top of one that actually landed.
-      log(`insert probe: ${shape.name}: transaction reported success but V${shape.videoIndex + 1} clip count stayed ${before} -- AMBIGUOUS (landed-by-replace or silent no-op). Probe stopped; check the timeline and paste this log back.`);
+    } catch (error) {
+      bad(`insert failed: ${cprbErrMsg(error)} -- the clip is still in the bin`);
       return;
     }
-    log('insert: no shape landed -- skipped (import unaffected); the probe lines above are the spike data to paste back', 'dim');
+    if (!txnOk) {
+      log('insert: the transaction returned false -- nothing added (the clip is still in the bin)', 'dim');
+      return;
+    }
+
+    // Read-back: believe the timeline, not the return value.
+    let after = await cprbCountClipsOnTrack(pr, sequence, videoTrackIndex);
+    if (before !== null && after === before) {
+      await sleep(400); // in case the edit lands a beat later
+      after = await cprbCountClipsOnTrack(pr, sequence, videoTrackIndex);
+    }
+    if (before === null || after === null) {
+      ok(`insert: placed at the playhead on V${videoTrackIndex + 1} `
+        + '(clip-count read-back unavailable on this build -- check the timeline)');
+      return;
+    }
+    if (after > before) {
+      ok(`insert: placed at the playhead on V${videoTrackIndex + 1} `
+        + `(track clip count ${before} -> ${after}; one Edit > Undo removes it)`);
+      return;
+    }
+    // txnOk yet no new clip: either an exact-overlap overwrite REPLACED one
+    // (count legitimately unchanged) or a silent no-op. Say so honestly.
+    log(`insert: the transaction succeeded but V${videoTrackIndex + 1}'s clip count stayed `
+      + `${before} -- it either replaced an exactly-overlapping clip or did nothing; `
+      + 'check the timeline', 'dim');
   } catch (error) {
     log(`insert failed (${cprbErrMsg(error)}) -- import unaffected`, 'dim');
   }
@@ -1061,7 +881,9 @@ async function handlePrResult(pr, msg) {
   });
   await setColorLabel(pr, project, outcome.item, msg.color_label);
   if (msg.insert_at_playhead === true) {
-    await insertAtPlayhead(pr, project, outcome.item, outcome.raw || null);
+    // RAW ProjectItem only -- createOverwriteItemAction rejects the cast
+    // ClipProjectItem wrapper (proven 2026-07-25; see insertAtPlayhead).
+    await insertAtPlayhead(pr, project, outcome.raw || null);
   }
 }
 

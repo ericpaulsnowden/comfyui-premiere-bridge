@@ -73,6 +73,40 @@ calling the XML output "verified" in the README.
 
 ## LIVE RESULTS
 
+- **INSERT-AT-PLAYHEAD SOLVED (owner, 2026-07-25, v0.9.6 probe, 26.3).** The
+  nine-shape probe answered it in ONE click. The winning call, now the only
+  branch in the code:
+  ```js
+  editor.createOverwriteItemAction(RAW_ProjectItem, playheadTickTime, videoTrackIndex, 0)
+  ```
+  inside `lockedAccess` + `executeTransaction`; read-back confirmed the target
+  track's clip count 0 -> 1 at the playhead. **The one thing that mattered was
+  the ITEM HANDLE: the raw `ProjectItem` off the bin enumeration works, the
+  `ClipProjectItem.cast(...)` wrapper throws "Invalid parameter."** — the two
+  cast shapes failed first, both raw shapes would have succeeded. `audio 0`
+  was never the problem and the `-1` "touch no audio track" variant was not
+  needed. Adobe's own sequenceEditor.ts passes raw items, which is why that
+  hypothesis was ranked second and the probe tried it third.
+  **GENERAL LESSON: a cast wrapper is fine as an action FACTORY (the same
+  cast item's `createSetColorLabelAction` works live) but is rejected when
+  passed as an ARGUMENT into another object's factory. Pass raw items.**
+  - Same run also recorded, verbatim: editor prototype =
+    ["constructor","createAddItemAction","createAddItemsAction","createCloneTrackItemAction","createInsertProjectItemAction","createOverwriteItemAction","createRemoveItemsAction","insertMogrtFromLibrary","insertMogrtFromPath"];
+    `createOverwriteItemAction.length=4`, `createInsertProjectItemAction.length=5`;
+    TickTime statics = ["TIME_INVALID","TIME_MAX","TIME_MIN","TIME_ONE_HOUR","TIME_ONE_MINUTE","TIME_ONE_SECOND","TIME_ZERO","createWithFrameAndFrameRate","createWithSeconds","createWithTicks",...]
+    (**`createWithSeconds` / `createWithFrameAndFrameRate` exist — M2 needs
+    them to turn a frame or a time into a TickTime**); a TickTime instance
+    carries `.ticks` (STRING), `.seconds` (number), `.ticksNumber`, and a
+    prototype of [add,alignToFrame,alignToNearestFrame,divide,equals,multiply,seconds,subtract,ticks,ticksNumber].
+  - **Two more VERIFY flags retired by the same log:** `Properties` SET
+    genuinely persists — "tagged via createSetValueAction(name, value,
+    PERSISTENT) (read-back verified)" — so bridge bookkeeping is real, not
+    aspirational; and the ingest guard's documented shape works — "readable
+    via ProjectSettings.getIngestSettings (documented shape)".
+  - **UNC/NAS media round-trips**: a Tailscale NAS path with SPACES
+    (`\\ugreen-nas.tail0ecd21.ts.net\ComfyUI Repository\ComfyUI Working\Input\...`)
+    imported and linked in place with no quoting problems.
+
 - **S7 — PASSED / M2 UNBLOCKED (owner, 2026-07-24, panel v0.9.3, Premiere
   26.3, win32).** The probe found the frame-export call that S6-D could not:
   **`pr.Exporter.exportSequenceFrame` EXISTS** — enumerated own keys were

@@ -47,6 +47,14 @@ RESULTS_DIRNAME = "premiere_results"
 
 DEFAULT_BIN_NAME = "ComfyUI Results"
 
+#: Per-node count of pushes that did NOT reach Premiere, keyed by ComfyUI's
+#: own node id (the hidden ``UNIQUE_ID`` input). MONOTONIC — bumped on every
+#: failure and never reset, which is precisely what makes
+#: :meth:`PremiereSendResult.IS_CHANGED` settle (see there). Module-level
+#: because ComfyUI constructs node instances per execution, so an attribute
+#: on ``self`` would not survive to the next run.
+_push_failures: dict[str, int] = {}
+
 #: §10.3/§10.5: the color_label COMBO's options. "Default" (the default
 #: option) means "leave whatever label Premiere already gave the clip" and is
 #: sent as "" on the wire — the plugin's documented skip value. Named
@@ -376,7 +384,40 @@ class PremiereSendResult:
                     },
                 ),
             },
+            # UNIQUE_ID lets the node identify ITSELF to the frontend
+            # (§10.6's per-node status line) and key the retry bookkeeping
+            # below. Hidden inputs carry no widget and no saved value, so
+            # adding one cannot disturb §8's widget-position rule.
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
+
+    @classmethod
+    def IS_CHANGED(cls, unique_id: Any = None, **_kwargs: Any) -> Any:
+        """Earn exactly ONE retry per failed delivery, then go quiet.
+
+        Owner bug 2026-07-25: "once I start up premiere the plugin wasn't
+        sending videos into Pr until after I reset the node even though the
+        plugin was connected." Exactly right, and it was this node's fault.
+        With no ``IS_CHANGED``, ComfyUI caches on inputs alone: a run made
+        while Premiere was closed writes the file, fails the push, and is
+        then considered DONE. Re-queueing changed nothing (same inputs =
+        cached, no execution, no second push), so the only way to get the
+        clip across was to dirty a widget by hand. Whether a push can
+        succeed depends on state OUTSIDE every input (is a panel connected
+        right now?) — the textbook reason to override ``IS_CHANGED``.
+
+        Mechanism: return this node's MONOTONIC failure count. ComfyUI
+        compares this against the value returned at the node's last actual
+        execution, so a count that has since been bumped reads as "changed"
+        and the next queue re-runs — one retry per failure, then stable.
+
+        A NaN ("always dirty while failing") version of this shipped first
+        and a live round-trip test caught its flaw: recovering from NaN to a
+        stable value is ITSELF a change, so a successful retry was followed
+        by one more run — a duplicate clip in the user's bin. The counter has
+        no such transition, which is exactly why it is NOT reset on success.
+        """
+        return f"f{_push_failures.get(str(unique_id), 0)}"
 
     def execute(
         self,
@@ -386,6 +427,7 @@ class PremiereSendResult:
         bin_name: str = DEFAULT_BIN_NAME,
         color_label: str = COLOR_LABEL_DEFAULT,
         insert_at_playhead: bool = False,
+        unique_id: Any = None,
     ) -> dict[str, Any]:
         if _context is None:
             raise RuntimeError(
@@ -440,11 +482,22 @@ class PremiereSendResult:
         # silently failed looked identical to a successful one. This event
         # drives a toast (web/cprb/send_result.js): quiet confirmation on
         # success, a persistent warning carrying the path on failure.
+        # Retry bookkeeping (see IS_CHANGED): a delivery that did not reach
+        # Premiere bumps this node's failure count, which is what earns the
+        # next queue a re-run instead of a cached "done" that never got
+        # across. Deliberately NOT reset on success — see IS_CHANGED.
+        node_key = str(unique_id)
+        if any(not entry["pushed"] for entry in sent):
+            _push_failures[node_key] = _push_failures.get(node_key, 0) + 1
+
         if _context.send_event is not None and sent:
             try:
                 _context.send_event(
                     "cprb.send_result",
-                    {"results": sent, "bin_name": bin_name},
+                    # node_id lets the frontend paint the status on THIS node
+                    # (§10.6) rather than only firing a toast that vanishes —
+                    # the owner reported (twice) not seeing the toast at all.
+                    {"results": sent, "bin_name": bin_name, "node_id": node_key},
                 )
             except Exception:
                 # A UI notification must never fail a finished run.

@@ -27,6 +27,62 @@ import { app } from '../../../scripts/app.js'
 import { api } from '../../../scripts/api.js'
 import { warn } from './api.js'
 
+/* ------------------------ on-node status line -------------------------
+ * The owner reported "I don't see an error/warning message anywhere"
+ * TWICE — once before the toast existed, and again after it shipped. A
+ * toast depends on `app.extensionManager.toast` existing in whatever
+ * frontend build he is running AND on him looking at the right moment,
+ * and it vanishes either way. So the authoritative surface is now a
+ * PERSISTENT line painted on the node that did the work (the event
+ * carries `node_id`), with the toast kept as the glanceable extra.
+ * Nothing here can throw into the event handler.
+ * ------------------------------------------------------------------- */
+
+/** Node-id → the status text we last painted, so a repaint after a reload
+ * (or a second event for the same node) replaces rather than stacks. */
+const STATUS_WIDGET_NAME = 'cprb_send_status'
+
+/** Finds a node by the id ComfyUI reported to the backend (string vs number
+ * safe — UNIQUE_ID arrives as a string, litegraph keys on numbers). */
+function findNodeById(nodeId) {
+  if (nodeId == null) return null
+  const nodes = app.graph?._nodes ?? app.graph?.nodes ?? []
+  const wanted = String(nodeId)
+  for (const node of nodes) {
+    if (String(node?.id) === wanted) return node
+  }
+  return null
+}
+
+/**
+ * Paints a persistent one-line status onto the node, colour-coded, using a
+ * plain text widget the node owns (`serialize: false` so it never lands in
+ * a saved workflow or shifts widget positions — §8's rule).
+ */
+function paintNodeStatus(nodeId, text, isWarning) {
+  try {
+    const node = findNodeById(nodeId)
+    if (!node) return
+    let widget = node.widgets?.find((w) => w?.name === STATUS_WIDGET_NAME)
+    if (!widget) {
+      // addWidget('text', ...) renders a read-only-ish line on the node body.
+      widget = node.addWidget?.('text', STATUS_WIDGET_NAME, '', () => {}, {
+        serialize: false
+      })
+      if (!widget) return
+      widget.serialize = false
+    }
+    widget.value = text
+    // A muted amber for "you must act", green-ish otherwise. litegraph reads
+    // these off the widget when drawing, and ignores them harmlessly if a
+    // given frontend build does not.
+    widget.label = isWarning ? '⚠ Premiere' : '✓ Premiere'
+    node.setDirtyCanvas?.(true, true)
+  } catch (error) {
+    warn('could not paint the send status on the node', error)
+  }
+}
+
 /** Trailing path component, for a toast summary that fits on one line. */
 function basename(path) {
   const parts = String(path || '').split(/[\\/]/)
@@ -59,6 +115,26 @@ function onSendResult(payload) {
   if (!results.length) return
   const pushed = results.filter((r) => r?.pushed)
   const failed = results.filter((r) => r && !r.pushed)
+
+  // The PERSISTENT surface first — it survives whether or not this frontend
+  // build has a working toast API, and it stays on screen.
+  if (failed.length) {
+    paintNodeStatus(
+      payload?.node_id,
+      `NOT sent — no Premiere panel connected. Import manually: ${failed
+        .map((r) => basename(r.path))
+        .join(', ')}`,
+      true
+    )
+  } else if (pushed.length) {
+    paintNodeStatus(
+      payload?.node_id,
+      `Sent to Premiere → ${payload?.bin_name || 'ComfyUI Results'} (${pushed
+        .map((r) => basename(r.path))
+        .join(', ')})`,
+      false
+    )
+  }
 
   if (pushed.length) {
     toast({

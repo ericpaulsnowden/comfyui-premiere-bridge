@@ -481,3 +481,94 @@ def test_send_result_event_survives_a_failing_emitter(tmp_path: Path) -> None:
     nodes_send.set_context(ctx)
     result = PremiereSendResult().execute(image=_image_batch(1), label="x")
     assert Path(result["result"][0]).is_file()
+
+
+# --- retry-until-it-lands (v0.9.7, owner bug 2026-07-25) -----------------------
+#
+# "once I start up premiere the plugin wasn't sending videos into Pr until
+# after I reset the node even though the plugin was connected" -- a run made
+# while Premiere was closed wrote the file, failed the push, and was then
+# CACHED as done, so re-queueing did nothing. IS_CHANGED now returns a
+# MONOTONIC per-node failure count: each failure earns exactly one retry, and
+# a success leaves the count alone so the node goes quiet.
+
+
+@pytest.fixture(autouse=True)
+def _reset_push_failures() -> Any:
+    nodes_send._push_failures.clear()
+    yield
+    nodes_send._push_failures.clear()
+
+
+def test_unique_id_is_a_hidden_input_not_a_widget() -> None:
+    """Hidden inputs carry no widget, so this cannot disturb the
+    restore-widgets-by-position rule (§8)."""
+    spec = PremiereSendResult.INPUT_TYPES()
+    assert spec["hidden"] == {"unique_id": "UNIQUE_ID"}
+    assert "unique_id" not in spec["optional"]
+
+
+def test_failed_push_changes_the_token_so_the_next_queue_retries(
+    context: BridgeContext,
+) -> None:
+    before = PremiereSendResult.IS_CHANGED(unique_id="7")
+    PremiereSendResult().execute(image=_image_batch(1), label="x", unique_id="7")
+    assert nodes_send._push_failures["7"] == 1
+    # ComfyUI compares against the token from the last execution: it differs,
+    # so the node re-runs and retries the push.
+    assert PremiereSendResult.IS_CHANGED(unique_id="7") != before
+
+
+def test_successful_push_leaves_the_token_stable_so_nothing_resends(
+    context: BridgeContext, pushes: list[dict]
+) -> None:
+    """The bug a live round-trip test caught in the first version of this fix:
+    recovering from an always-dirty token is ITSELF a change, which produced
+    one extra run (a duplicate clip in the bin). A monotonic counter has no
+    such transition."""
+    token_at_execution = PremiereSendResult.IS_CHANGED(unique_id="7")
+    PremiereSendResult().execute(image=_image_batch(1), label="x", unique_id="7")
+    assert "7" not in nodes_send._push_failures  # never bumped: it landed
+    assert PremiereSendResult.IS_CHANGED(unique_id="7") == token_at_execution
+
+
+def test_recovery_does_not_earn_an_extra_run(
+    context: BridgeContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fail -> retry -> success -> QUIET (no third run). This is the exact
+    sequence Eric hits: run with Premiere closed, open Premiere, press Run."""
+    node = PremiereSendResult()
+    # Run 1: no plugin -> fails.
+    node.execute(image=_image_batch(1), label="x", unique_id="9")
+    token_after_failure = PremiereSendResult.IS_CHANGED(unique_id="9")
+
+    # Run 2 (the retry): plugin now connected -> succeeds.
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        cprb_routes, "push_result", lambda **kw: (calls.append(kw), True)[1]
+    )
+    node.execute(image=_image_batch(1), label="x", unique_id="9")
+    assert len(calls) == 1
+
+    # Run 3 would be cached: the token has not moved since run 2 executed.
+    assert PremiereSendResult.IS_CHANGED(unique_id="9") == token_after_failure
+
+
+def test_retry_state_is_per_node(context: BridgeContext) -> None:
+    PremiereSendResult().execute(image=_image_batch(1), label="a", unique_id="1")
+    assert nodes_send._push_failures.get("1") == 1
+    assert nodes_send._push_failures.get("2") is None
+
+
+def test_send_result_event_carries_node_id_for_the_on_node_status(
+    tmp_path: Path,
+) -> None:
+    events: list[tuple[str, dict]] = []
+    ctx = BridgeContext(
+        output_dir=tmp_path / "out",
+        input_dir=tmp_path / "in",
+        send_event=lambda name, payload: events.append((name, payload)),
+    )
+    nodes_send.set_context(ctx)
+    PremiereSendResult().execute(image=_image_batch(1), label="x", unique_id="42")
+    assert events[0][1]["node_id"] == "42"
