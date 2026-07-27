@@ -21,14 +21,34 @@ try:
     from .cprb.version import __version__
 
     _PACKAGE_PREFIX = f"{__name__}.cprb"
-except ImportError:
+except ImportError as _relative_import_error:
     # Imported without package context (pytest rootdir setups etc.); ComfyUI
     # itself always loads this file as a package via the branch above.
-    from cprb import routes as _routes
-    from cprb.context import BridgeContext
-    from cprb.version import __version__
+    try:
+        from cprb import routes as _routes
+        from cprb.context import BridgeContext
+        from cprb.version import __version__
 
-    _PACKAGE_PREFIX = "cprb"
+        _PACKAGE_PREFIX = "cprb"
+    except ImportError as _flat_import_error:
+        # BOTH branches failed, so report BOTH reasons. Either one can be the
+        # informative half and the other pure noise, depending on how the file
+        # was loaded, so picking one always risks burying the real cause:
+        #   - loaded as a package (how ComfyUI does it), the relative error is
+        #     real (e.g. a missing dependency) and the flat one is noise
+        #     ("No module named 'cprb'");
+        #   - loaded flat by tooling, the relative error is the noise and the
+        #     flat one carries the truth.
+        # A sibling pack cost real debugging time to exactly this masking
+        # (2026-07-26, comfyui-photoshop-bridge: a missing `watchdog` surfaced
+        # as a baffling "No module named 'cpsb'").
+        raise ImportError(
+            "comfyui-premiere-bridge could not be imported. "
+            f"Package-relative import failed with: {_relative_import_error}. "
+            f"Flat import failed with: {_flat_import_error}. "
+            "If either names a third-party module, install this pack's "
+            "dependencies with the SAME Python that runs ComfyUI."
+        ) from _relative_import_error
 
 logger = logging.getLogger("cprb")
 
