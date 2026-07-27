@@ -99,7 +99,9 @@ install:
    *ComfyUI for Premiere* in Premiere's plugin list).
 
 It finds ComfyUI at `localhost:8188` by itself; the ADVANCED section has a field
-if yours is elsewhere.
+if yours is elsewhere. This pack's HTTP routes and WebSocket endpoint register
+directly onto that same ComfyUI server, so exposing ComfyUI beyond localhost
+exposes those too — the same no-authentication trust model as ComfyUI's own routes.
 
 > **A UDT-loaded plugin does not survive a Premiere restart.** That's how
 > developer loads work — reopen the UXP Developer Tool and press **Load** again
@@ -577,6 +579,25 @@ git pull
 Then restart ComfyUI **and** hard-refresh the browser tab. Every push bumps the
 version and is tagged; the contracts behind all of the above are specified in
 [docs/PROTOCOL.md](docs/PROTOCOL.md).
+
+## Running the tests
+
+Runtime dependencies are stdlib plus whatever ComfyUI itself ships — this pack
+declares none of its own (see [Install](#1-the-node-pack--required)). The test
+suite goes further and exercises real image/tensor/media code paths, which need
+`pillow`, `torch` and `av` (PyAV) actually importable. Without them, those
+specific tests **skip with a reason** instead of failing, so running the suite
+with a bare `pytest` install is expected to show skips, never failures.
+
+Simplest way to a fully green run (no skips): a venv with
+`pip install pytest pytest-aiohttp pytest-asyncio ruff pillow av` plus a
+ComfyUI environment's own `torch` (a bare `pip install torch` risks pulling the
+wrong build for your machine) — or just run the suite with ComfyUI's own venv.
+Then, from the repo root:
+
+```bash
+pytest -q
+```
 
 ## License
 

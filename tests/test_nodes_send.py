@@ -25,6 +25,13 @@ from cprb import routes as cprb_routes
 from cprb.context import BridgeContext
 from cprb.nodes_send import PremiereSendResult
 
+#: Every test below that pushes an ``image=`` reaches ``_tensor_to_pil``
+#: (cprb/nodes_send.py), which imports PIL lazily -- ships with ComfyUI's own
+#: environment, not necessarily this bare test venv. Video-only tests and the
+#: ones that raise before touching the image never hit that import, so they
+#: are deliberately left unguarded.
+_PIL_REASON = "Pillow ships with ComfyUI's own environment, not this bare test venv"
+
 
 def _image_batch(count: int):
     """A ComfyUI-shaped IMAGE batch: (N, H, W, C) float32 in [0, 1], all black."""
@@ -159,6 +166,7 @@ def test_execute_without_context_raises() -> None:
 def test_execute_image_writes_png_and_says_import_manually_without_a_plugin(
     context: BridgeContext,
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     node = PremiereSendResult()
     result = node.execute(image=_image_batch(1), label="My Frame")
 
@@ -181,6 +189,7 @@ def test_execute_image_writes_png_and_says_import_manually_without_a_plugin(
 def test_execute_image_default_label_falls_back_to_result_stem(
     context: BridgeContext,
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     node = PremiereSendResult()
     written = Path(node.execute(image=_image_batch(1))["result"][0])
     assert written.name.startswith("result_")
@@ -191,6 +200,7 @@ def test_written_names_never_collide_even_within_one_second(
 ) -> None:
     """Every push is a NEW import (§10.5): identical label + timestamp must
     produce distinct files, never overwrite the earlier one."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     monkeypatch.setattr(nodes_send.time, "strftime", lambda _fmt: "20260723-120000")
     node = PremiereSendResult()
 
@@ -205,6 +215,7 @@ def test_written_names_never_collide_even_within_one_second(
 def test_execute_batched_image_writes_first_frame_and_says_so(
     context: BridgeContext,
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     node = PremiereSendResult()
     result = node.execute(image=_image_batch(3))
 
@@ -363,6 +374,7 @@ def test_execute_video_without_save_to_raises_naming_the_input() -> None:
 def test_execute_both_inputs_push_both_and_video_path_is_primary(
     context: BridgeContext, tmp_path: Path, pushes: list[dict]
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     source = tmp_path / "final-audio.mp4"
     source.write_bytes(b"video bytes")
     video = FakeVideoWithSource(source)
@@ -405,6 +417,7 @@ def test_color_label_widget_is_appended_last_with_default_option() -> None:
 def test_color_label_default_travels_as_empty_string(
     context: BridgeContext, pushes: list[dict]
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     PremiereSendResult().execute(image=_image_batch(1), label="x")
     assert pushes[0]["color_label"] == ""  # the plugin's documented skip value
 
@@ -414,6 +427,7 @@ def test_color_label_legacy_none_is_still_accepted(
 ) -> None:
     """A workflow saved under v0.9.2 still carries the string "None" — it must
     keep meaning "don't label", not error and not label arbitrarily."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     PremiereSendResult().execute(image=_image_batch(1), label="x", color_label="None")
     assert pushes[0]["color_label"] == ""
 
@@ -421,6 +435,7 @@ def test_color_label_legacy_none_is_still_accepted(
 def test_color_label_real_color_passes_through(
     context: BridgeContext, pushes: list[dict]
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     PremiereSendResult().execute(image=_image_batch(1), label="x", color_label="teal")
     assert pushes[0]["color_label"] == "teal"
 
@@ -431,6 +446,7 @@ def test_color_label_real_color_passes_through(
 def test_insert_at_playhead_defaults_false_on_the_wire(
     context: BridgeContext, pushes: list[dict]
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     PremiereSendResult().execute(image=_image_batch(1), label="x")
     assert pushes[0]["insert_at_playhead"] is False
 
@@ -438,6 +454,7 @@ def test_insert_at_playhead_defaults_false_on_the_wire(
 def test_insert_at_playhead_true_passes_through(
     context: BridgeContext, pushes: list[dict]
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     PremiereSendResult().execute(
         image=_image_batch(1), label="x", insert_at_playhead=True
     )
@@ -450,6 +467,7 @@ def test_insert_at_playhead_true_passes_through(
 def test_send_result_event_reports_pushed_state(tmp_path: Path) -> None:
     """The node's ui.text is not rendered by anything in ComfyUI, so the
     frontend toast depends on this event carrying per-file outcomes."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     events: list[tuple[str, dict]] = []
     ctx = BridgeContext(
         output_dir=tmp_path / "out",
@@ -472,6 +490,8 @@ def test_send_result_event_reports_pushed_state(tmp_path: Path) -> None:
 
 def test_send_result_event_survives_a_failing_emitter(tmp_path: Path) -> None:
     """A UI notification must never fail a finished run."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
+
     def boom(_name: str, _payload: dict) -> None:
         raise RuntimeError("frontend gone")
 
@@ -511,6 +531,7 @@ def test_unique_id_is_a_hidden_input_not_a_widget() -> None:
 def test_failed_push_changes_the_token_so_the_next_queue_retries(
     context: BridgeContext,
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     before = PremiereSendResult.IS_CHANGED(unique_id="7")
     PremiereSendResult().execute(image=_image_batch(1), label="x", unique_id="7")
     assert nodes_send._push_failures["7"] == 1
@@ -526,6 +547,7 @@ def test_successful_push_leaves_the_token_stable_so_nothing_resends(
     recovering from an always-dirty token is ITSELF a change, which produced
     one extra run (a duplicate clip in the bin). A monotonic counter has no
     such transition."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     token_at_execution = PremiereSendResult.IS_CHANGED(unique_id="7")
     PremiereSendResult().execute(image=_image_batch(1), label="x", unique_id="7")
     assert "7" not in nodes_send._push_failures  # never bumped: it landed
@@ -537,6 +559,7 @@ def test_recovery_does_not_earn_an_extra_run(
 ) -> None:
     """fail -> retry -> success -> QUIET (no third run). This is the exact
     sequence Eric hits: run with Premiere closed, open Premiere, press Run."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     node = PremiereSendResult()
     # Run 1: no plugin -> fails.
     node.execute(image=_image_batch(1), label="x", unique_id="9")
@@ -555,6 +578,7 @@ def test_recovery_does_not_earn_an_extra_run(
 
 
 def test_retry_state_is_per_node(context: BridgeContext) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     PremiereSendResult().execute(image=_image_batch(1), label="a", unique_id="1")
     assert nodes_send._push_failures.get("1") == 1
     assert nodes_send._push_failures.get("2") is None
@@ -563,6 +587,7 @@ def test_retry_state_is_per_node(context: BridgeContext) -> None:
 def test_send_result_event_carries_node_id_for_the_on_node_status(
     tmp_path: Path,
 ) -> None:
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     events: list[tuple[str, dict]] = []
     ctx = BridgeContext(
         output_dir=tmp_path / "out",

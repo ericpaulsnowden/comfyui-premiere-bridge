@@ -293,7 +293,7 @@ class PremiereIterateShots:
     class, which never loops over anything except *shots* itself.
 
     Confirmed against ComfyUI's own ``execution.py`` (checked in this rig at
-    ``comfyui-env/ComfyUI/execution.py``):
+    ``~/Library/Application Support/comfy_ps/rig/ComfyUI/execution.py``):
 
     * ``merge_result_data()`` reads THIS node's ``OUTPUT_IS_LIST`` and, for
       every output flagged ``True``, ``list.extend()``s this call's

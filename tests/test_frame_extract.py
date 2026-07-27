@@ -17,6 +17,14 @@ import pytest
 
 from cprb.frame_extract import extract_frame
 
+#: extract_frame() imports both unconditionally (see the module docstring
+#: above), even on the missing/unreadable-file paths below -- so every test in
+#: this file needs both importable, regardless of whether it decodes real
+#: media. Guarded per-test (not at module scope) so each test still gets its
+#: own SKIPPED entry instead of collapsing the whole file into one.
+_AV_REASON = "av ships with ComfyUI's own environment, not this bare test venv"
+_TORCH_REASON = "torch ships with ComfyUI's own environment, not this bare test venv"
+
 FRAME_COUNT = 8
 FPS = 8  # one frame per second -- convenient in_seconds math below.
 WIDTH = 32
@@ -29,6 +37,7 @@ def _write_tiny_video(path: Path) -> None:
     Each frame is a solid, distinct color (``(i * 20) % 256``) so a
     successfully-seeked decode is visibly different from frame to frame.
     """
+    pytest.importorskip("av", reason=_AV_REASON)
     import av
     import numpy as np
 
@@ -53,7 +62,7 @@ def _write_tiny_video(path: Path) -> None:
 
 
 def test_extract_frame_returns_expected_shape_dtype_and_range(tmp_path: Path) -> None:
-    import torch
+    torch = pytest.importorskip("torch", reason=_TORCH_REASON)
 
     path = tmp_path / "tiny.mp4"
     _write_tiny_video(path)
@@ -68,6 +77,7 @@ def test_extract_frame_returns_expected_shape_dtype_and_range(tmp_path: Path) ->
 
 
 def test_extract_frame_in_seconds_zero_decodes_the_first_frame(tmp_path: Path) -> None:
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     path = tmp_path / "tiny.mp4"
     _write_tiny_video(path)
 
@@ -83,7 +93,7 @@ def test_extract_frame_seeks_towards_the_requested_point(tmp_path: Path) -> None
     """Not a frame-exact assertion (PROTOCOL.md §6.5 is explicit this is
     "nearest frame", best-effort) -- just confirms *in_seconds* actually
     changes which frame comes back, rather than always the first one."""
-    import torch
+    torch = pytest.importorskip("torch", reason=_TORCH_REASON)
 
     path = tmp_path / "tiny.mp4"
     _write_tiny_video(path)
@@ -99,6 +109,10 @@ def test_extract_frame_seeks_towards_the_requested_point(tmp_path: Path) -> None
 
 
 def test_extract_frame_missing_file_raises_value_error_naming_the_path(tmp_path: Path) -> None:
+    # extract_frame() imports av/torch unconditionally before it ever checks
+    # the path (module docstring above), so even this error path needs both.
+    pytest.importorskip("av", reason=_AV_REASON)
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     missing = tmp_path / "does_not_exist.mp4"
 
     with pytest.raises(ValueError, match=str(missing)):
@@ -106,6 +120,8 @@ def test_extract_frame_missing_file_raises_value_error_naming_the_path(tmp_path:
 
 
 def test_extract_frame_unreadable_file_raises_value_error_naming_the_path(tmp_path: Path) -> None:
+    pytest.importorskip("av", reason=_AV_REASON)
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     garbage = tmp_path / "not_really_a_video.mp4"
     garbage.write_bytes(b"this is not a video file, just plain bytes")
 

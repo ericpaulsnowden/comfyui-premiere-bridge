@@ -55,6 +55,14 @@ CLIP_FRAMES = 96  # 4.0s at 24fps
 CLIP_WIDTH = 32
 CLIP_HEIGHT = 24
 
+#: ``load_image_file`` (cprb/nodes_source.py) imports numpy/torch/PIL lazily,
+#: all three at once -- ships with ComfyUI's own environment, not necessarily
+#: this bare test venv. ``_write_png`` below needs only PIL (to write the
+#: fixture); anything that also calls ``PremiereFrameSource().execute()``
+#: needs torch too.
+_PIL_REASON = "Pillow ships with ComfyUI's own environment, not this bare test venv"
+_TORCH_REASON = "torch ships with ComfyUI's own environment, not this bare test venv"
+
 
 #: The REAL factory, captured at import time -- before the autouse fixture
 #: below replaces the module attribute -- so the error-path test can still
@@ -96,6 +104,7 @@ def _reset_module_context():
 
 def _write_png(path: Path, size: tuple[int, int] = (6, 4), mode: str = "RGB", color=None) -> Path:
     """A real image file at *path* in *mode* (RGB/RGBA/L/P all exercised below)."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
     from PIL import Image
 
     if color is None:
@@ -148,7 +157,7 @@ def test_set_context_accepts_a_real_context_and_none(context: BridgeContext) -> 
 
 
 def test_frame_source_returns_comfy_image_tensor_shape_dtype_and_range(tmp_path: Path) -> None:
-    import torch
+    torch = pytest.importorskip("torch", reason=_TORCH_REASON)
 
     path = _write_png(tmp_path / "frames" / "frame_a.png", size=(6, 4))
     image, width, height, out_path = PremiereFrameSource().execute(str(path))
@@ -163,6 +172,7 @@ def test_frame_source_returns_comfy_image_tensor_shape_dtype_and_range(tmp_path:
 
 
 def test_frame_source_pixel_values_are_the_file_scaled_to_unit_range(tmp_path: Path) -> None:
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     path = _write_png(tmp_path / "frame.png", size=(2, 2), color=(255, 0, 51))
     image, _w, _h, _p = PremiereFrameSource().execute(str(path))
 
@@ -176,6 +186,7 @@ def test_frame_source_converts_non_rgb_sources_to_three_channels(
     tmp_path: Path, mode: str
 ) -> None:
     """RGBA / greyscale / palette all become a 3-channel RGB IMAGE (§11)."""
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     path = _write_png(tmp_path / f"frame_{mode}.png", size=(5, 3), mode=mode)
     image, width, height, _p = PremiereFrameSource().execute(str(path))
 
@@ -184,6 +195,7 @@ def test_frame_source_converts_non_rgb_sources_to_three_channels(
 
 
 def test_frame_source_greyscale_replicates_the_single_channel(tmp_path: Path) -> None:
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     path = _write_png(tmp_path / "grey.png", size=(2, 2), mode="L", color=128)
     image, _w, _h, _p = PremiereFrameSource().execute(str(path))
 
@@ -242,6 +254,8 @@ def test_frame_source_execute_raises_naming_a_missing_file(tmp_path: Path) -> No
 
 def test_frame_source_execute_on_a_truncated_file_names_it(tmp_path: Path) -> None:
     """Premiere's exporter can report success before the bytes land (§11)."""
+    pytest.importorskip("PIL", reason=_PIL_REASON)
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     half_written = tmp_path / "frames" / "half.png"
     half_written.parent.mkdir(parents=True)
     half_written.write_bytes(b"")  # zero-byte: exactly what a race leaves behind
@@ -252,6 +266,7 @@ def test_frame_source_execute_on_a_truncated_file_names_it(tmp_path: Path) -> No
 
 def test_frame_source_resolves_premieres_doubled_extension_name(tmp_path: Path) -> None:
     """Pre-26.2.2 Premiere wrote `frame.png.png`; the node finds it either way."""
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     doubled = _write_png(tmp_path / "frames" / "frame.png.png", size=(3, 2))
     reported = tmp_path / "frames" / "frame.png"  # what the plugin would report
 
@@ -262,6 +277,7 @@ def test_frame_source_resolves_premieres_doubled_extension_name(tmp_path: Path) 
 
 
 def test_frame_source_prefers_the_exact_name_over_the_doubled_one(tmp_path: Path) -> None:
+    pytest.importorskip("torch", reason=_TORCH_REASON)
     exact = _write_png(tmp_path / "frame.png", size=(4, 2))
     _write_png(tmp_path / "frame.png.png", size=(8, 6))
 
