@@ -941,13 +941,20 @@ and because both surfaces have documented traps. Spike history and sourcing:
 SPIKES.md S7.
 
 **Frame export.** Confirmed signature (Adobe's own `premierepro-types`
-`ExporterStatic` plus the 26.3 class reference; arity 6, so
-`pr.Exporter.exportSequenceFrame.length === 6` is a free runtime check):
+`ExporterStatic` plus the 26.3 class reference), and PROVEN live on 26.3.0
+(SPIKES S7-b, 2026-07-26):
 
 ```
 pr.Exporter.exportSequenceFrame(sequence, time, filename, filepath, width, height)
   -> Promise<boolean>
 ```
+
+- **`Function.length` is NOT a usable check.** The documented parameter count
+  is 6, but the live binding reports `exportSequenceFrame.length === 0` while
+  exporting perfectly — native UXP bindings do not publish an arity. An
+  earlier version of this section claimed `=== 6` was "a free runtime check";
+  it would have rejected a working build. Only `typeof === 'function'` means
+  anything, and the panel's probe says so in its own log line.
 
 - `filename` is a **BASENAME ONLY**; `filepath` is a **DIRECTORY** with no
   trailing separator. The official parameter table's `filename` example is a

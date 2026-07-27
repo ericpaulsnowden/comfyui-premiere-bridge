@@ -387,10 +387,18 @@ function cprbUniqueFrameName(stem) {
   return `${stem}_${Date.now().toString(36)}_${cprbFrameSeq}.png`;
 }
 
-/** One-time arity/type probe. RESEARCH A shape 4: a free confirmation that
- * the documented 6-arg signature really is this build's signature, so a
+/** One-time presence probe for the one call this whole feature rests on, so a
  * future Adobe change is one log line to diagnose instead of a
- * re-investigation. */
+ * re-investigation.
+ *
+ * ONLY `typeof` is meaningful. `Function.length` was expected to read 6 (the
+ * documented parameter count) and DOES NOT: the owner's 26.3.0 run logged
+ * `arity=0` while the very same click exported a real frame that round-tripped
+ * end to end (SPIKES S7-b, 2026-07-26). Native UXP bindings simply do not
+ * publish a parameter count, so a `.length === 6` check would have rejected a
+ * working build. The arity is still printed -- a NON-ZERO value that isn't 6
+ * would be a genuine signal -- but 0 is normal and the line says so, because
+ * the previous wording read as a failure during a successful run. */
 let cprbExporterProbeLogged = false;
 
 function cprbLogExporterProbe(pr) {
@@ -398,8 +406,13 @@ function cprbLogExporterProbe(pr) {
   cprbExporterProbeLogged = true;
   try {
     const fn = pr && pr.Exporter && pr.Exporter.exportSequenceFrame;
-    logDebug(`frame: Exporter.exportSequenceFrame typeof=${typeof fn}`
-      + ` arity=${typeof fn === 'function' ? fn.length : 'n/a'} (expect function / 6)`);
+    const arity = typeof fn === 'function' ? fn.length : 'n/a';
+    const note = typeof fn !== 'function'
+      ? ' -- MISSING on this build, frame export cannot work'
+      : (arity === 0
+        ? ' -- OK (native bindings report arity 0; only typeof matters)'
+        : ' -- OK');
+    logDebug(`frame: Exporter.exportSequenceFrame typeof=${typeof fn} arity=${arity}${note}`);
   } catch (error) {
     logDebug(`frame: Exporter probe threw: ${describeError(error)}`);
   }

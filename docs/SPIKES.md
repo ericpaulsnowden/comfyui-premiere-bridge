@@ -77,7 +77,7 @@ calling the XML output "verified" in the README.
   successor is `cprbLogExporterProbe` (typeof + arity of
   `exportSequenceFrame`), which every "Frame → ComfyUI" click logs for free,
   before any read that can fail.
-  - [ ] **S7-b — `exportSequenceFrame`'s own SIGNATURE** (the "NEXT for M2"
+  - [x] **S7-b — `exportSequenceFrame`'s own SIGNATURE** — PASSED LIVE 2026-07-26 (the "NEXT for M2"
     item S7's LIVE RESULTS left open). **RESOLVED FROM DOCUMENTATION, NOT
     YET FROM A LIVE RUN** — so it stays unchecked, per this file's rule, and
     the M2 build is what will check it. What the research established
@@ -88,10 +88,10 @@ calling the XML output "verified" in the README.
     exports stills to a temp dir for downstream analysis, i.e. our exact use
     case):
     - `exportSequenceFrame(sequence, time, filename, filepath, width, height)
-      -> Promise<boolean>`, `Since: 25.6`. Arity 6, so
-      `pr.Exporter.exportSequenceFrame.length === 6` is a free confirmation
-      on the owner's build, and it agrees with S7's live enumeration of
-      `Exporter`'s own keys.
+      -> Promise<boolean>`, `Since: 25.6`. **The documented arity of 6 is NOT
+      observable at runtime** — see the S7-b live result below: the binding
+      reports `.length === 0` while exporting correctly. Only
+      `typeof === 'function'` is a usable check.
     - `filename` is a **BASENAME ONLY**, `filepath` a **DIRECTORY** — the
       official parameter table's `filename` example (a full path) is WRONG:
       a full path there makes Premiere write to a bad combined path and
@@ -133,7 +133,7 @@ calling the XML output "verified" in the README.
       remaining unproven read in the frame path; when both it and
       `getSettings()` fail the panel now dumps `Sequence`'s own and prototype
       property names, so the real method name arrives in the same log.
-  - [ ] **S7-c — clip read (`Clip → ComfyUI`).** The whole chain is
+  - [x] **S7-c — clip read (`Clip → ComfyUI`).** — PASSED LIVE 2026-07-26 The whole chain is
     documented and executed verbatim in Adobe's own sample
     (`sequence.getSelection()` → `.getTrackItems()` → `item.getProjectItem()`
     RAW → `pr.ClipProjectItem.cast(raw)` → `.getMediaFilePath()`, plus
@@ -179,6 +179,60 @@ calling the XML output "verified" in the README.
     `(out-in) ≈ timeline duration × speed` holding in the panel log.
 
 ## LIVE RESULTS
+
+- **S7-b — FRAME EXPORT PASSED (owner, 2026-07-26, panel v0.10.0, Premiere
+  26.3.0 / win32).** The whole M2 round trip closed: four stills exported, then
+  a ComfyUI-inverted result imported back into the bin. Every open question
+  answered in one session:
+  - **The A1 call shape is CORRECT and is the only one needed.**
+    `exportSequenceFrame(sequence, position, BASENAME, DIRECTORY, w, h)`
+    returned `true` on attempt 1/4 every single time; shape A2 (trailing
+    separator) was never reached and can be considered dead weight.
+  - **`getFrameSize()` WORKS** — reported `704x704` for the owner's sequence.
+    That retires the last unproven read in the frame path; the `getSettings()`
+    fallback and the prototype-dump diagnostic were never needed.
+  - **`exportSequenceFrame.length === 0`, NOT 6.** The binding exports
+    perfectly while reporting no arity — native UXP bindings do not publish a
+    parameter count. The panel's own probe line used to read
+    `arity=0 (expect function / 6)`, which looked like a failure during a
+    completely successful run; corrected in v0.10.2 to say only `typeof`
+    matters. **Never gate anything on `Function.length` for these bindings.**
+  - **Both panel-side file probes refused, exactly as predicted**, which
+    VALIDATES the decision to verify server-side rather than escalate the
+    manifest permission: `getEntryWithUrl` → "Could not find an entry of
+    'file:///E:%5C...'" and `fs.lstatSync` → "Unimplemented method:
+    lstatSync". Under `localFileSystem: "request"` the panel simply cannot see
+    its own output, so `cprbLocateExport` returns `unknown` on every real
+    install and the retry ladder below it is unreachable. §11.2's server-side
+    `path_exists` / `resolved_path` is the check that actually runs.
+  - The frames directory was a LOCAL disk (`E:\ComfyUI Working\Input\
+    premiere_frames\`) and Premiere wrote to it without complaint. The
+    `CPRB_FRAMES_DIR` override was therefore not exercised; the NAS-share case
+    remains untested but the escape hatch is in place.
+  - No doubled extension on 26.3.0 (the 26.2.2 fix holds); the guard stays.
+
+- **S7-c — CLIP READ PASSED (owner, 2026-07-26, same session).** Every one of
+  the four undocumented behaviours this box was waiting on is now answered:
+  - **Timeline selection SURVIVES focus moving into the UXP panel.**
+    `getSelection()` returned a live selection at click time — the
+    `getIsSelected()` sweep fallback was never needed.
+  - **A linked A/V click returns TWO track items**, and the
+    `createAddVideoTransitionAction` duck-type correctly picked the video one
+    ("one video clip selected (via timeline selection)").
+  - **`getInPoint()`/`getOutPoint()` are SOURCE-relative**, as Adobe's sample
+    comment claimed: a full clip read `0.000..20.042s`, and the invariant held
+    exactly — `span 20.042s, timeline duration 20.042s, speed 1,
+    reversed=false`.
+  - **`getOutPoint()` is EXCLUSIVE — CONFIRMED by arithmetic.** The node
+    emitted `in=0 out=481 frame_count=481 at 24fps`; Premiere's own duration
+    readout for that clip was **20 s + 1 frame = 20x24+1 = 481 frames**. Exact
+    match, so `frame_count = out - in` is right and no off-by-one correction is
+    needed. This was the one thing the design had committed to without proof.
+  - **A UNC/NAS source path round-tripped fine**
+    (`\\ugreen-nas...\ComfyUI Working\Input\...mp4`) — the clip half needs
+    no local media.
+  - Still untested, and now the only clip unknowns worth naming: a SUBCLIP,
+    and media whose Media Start is not `00:00:00:00` (R3D/MXF/broadcast).
 
 - **INSERT-AT-PLAYHEAD SOLVED (owner, 2026-07-25, v0.9.6 probe, 26.3).** The
   nine-shape probe answered it in ONE click. The winning call, now the only
