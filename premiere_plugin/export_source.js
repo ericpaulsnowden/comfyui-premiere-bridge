@@ -273,17 +273,39 @@ function cprbTickString(tickTime) {
  * the three distinct outcomes.
  */
 
-/** Session memory so an access-denied fs probe says so ONCE, not per attempt. */
-let cprbFsProbeNote = null;
+/** Every distinct probe note said so far, so each is logged ONCE per session.
+ * (This used to hold only the LAST note, so two alternating notes re-printed
+ * on every single export -- which is how a fully successful run came to show
+ * two "refused" lines each time.) */
+const cprbFsProbeNotes = new Set();
 
 function cprbNoteFsProbe(note) {
-  if (cprbFsProbeNote === note) return;
-  cprbFsProbeNote = note;
+  if (cprbFsProbeNotes.has(note)) return;
+  cprbFsProbeNotes.add(note);
   logDebug(`frame: file check -- ${note}`);
 }
 
+/**
+ * Session verdict on whether this panel can read the frames folder at all:
+ * `null` = not yet tried, `false` = proven it cannot.
+ *
+ * SETTLED LIVE (SPIKES S7-b, owner 2026-07-26, Premiere 26.3.0): under this
+ * manifest's `localFileSystem: "request"` BOTH readers refuse -- and they
+ * refuse identically on every call, because the manifest cannot change
+ * mid-session. So the very first "cannot tell" is the final answer, and
+ * re-probing afterwards only produces noise. Latching it also removes a real
+ * landmine: `getEntryWithUrl`'s refusal reads "Could not find an entry of
+ * 'file:///...'", which is a PERMISSION error wearing a not-found costume.
+ * The heuristic below happens not to match that exact wording, but if Adobe
+ * ever reworded it to "not found" the panel would have declared a
+ * perfectly-written frame missing, retried it four times under fresh names,
+ * and then reported FAILED. Not probing at all cannot misread anything.
+ */
+let cprbFsProbeUsable = null;
+
 /** Does this error text mean "the file is not there" (as opposed to "you may
- * not look")? The distinction decides retry-vs-give-up. */
+ * not look")? The distinction decides retry-vs-give-up. Only consulted while
+ * {@link cprbFsProbeUsable} is still unknown. */
 function cprbLooksMissing(message) {
   return /ENOENT|no such file|not\s*found|cannot find|does not exist|doesn't exist/i.test(
     String(message || '')
@@ -298,7 +320,15 @@ function cprbLooksMissing(message) {
  * handled honestly by the caller.
  */
 async function cprbFileExists(fullPath) {
+  // Already proven unreadable this session -- say nothing, look at nothing.
+  if (cprbFsProbeUsable === false) return null;
+
   let opaque = false;
+  // Each reader's reason is COLLECTED, not logged on the spot: they are
+  // emitted together inside the single neutral line below. Logged separately
+  // they were two "refused" lines leading every session's first export, which
+  // reads as a fault in a log the owner scans for faults.
+  const reasons = [];
 
   // (1) UXP storage -- the documented way to reach an absolute path, and the
   // one that needs `fullAccess` (hence the likely refusal).
@@ -310,13 +340,12 @@ async function cprbFileExists(fullPath) {
         const entry = await lfs.getEntryWithUrl(`file:${fullPath}`);
         if (entry) return true;
         opaque = true;
-        cprbNoteFsProbe('getEntryWithUrl returned nothing');
+        reasons.push('getEntryWithUrl returned nothing');
       } catch (error) {
         const message = describeError(error);
         if (cprbLooksMissing(message)) return false;
         opaque = true;
-        cprbNoteFsProbe(`getEntryWithUrl refused: ${message} (expected under `
-          + 'localFileSystem "request" -- ComfyUI verifies the file instead)');
+        reasons.push(`getEntryWithUrl: ${message}`);
       }
     }
   } catch (_) { /* no uxp storage here */ }
@@ -333,12 +362,22 @@ async function cprbFileExists(fullPath) {
         const message = describeError(error);
         if (cprbLooksMissing(message)) return false;
         opaque = true;
-        cprbNoteFsProbe(`fs stat refused: ${message}`);
+        reasons.push(`fs stat: ${message}`);
       }
     }
   } catch (_) { /* no fs module here */ }
 
-  if (!opaque) cprbNoteFsProbe('no filesystem reader available in this panel');
+  // Latch the verdict and say it ONCE, neutrally -- this is the expected
+  // steady state on the shipping manifest, not a fault, and it must not read
+  // like one in a log the owner scans for failures.
+  cprbFsProbeUsable = false;
+  cprbNoteFsProbe((opaque
+    ? 'this panel cannot read the frames folder (localFileSystem "request") -- '
+      + 'normal and expected, not an error'
+    : 'no filesystem reader available in this panel')
+    + '; ComfyUI verifies every export server-side and warns there if one is '
+    + 'missing. Said once per session.'
+    + (reasons.length ? ` [${reasons.join('; ')}]` : ''));
   return null;
 }
 
@@ -572,14 +611,13 @@ async function cprbExportFrameStill(pr, sequence, position, framesDir, stem, siz
         return { path: located.path, confirmed: true, shape: `${shape.name} (${shape.note})` };
       }
       if (located.state === 'unknown') {
-        // Cannot look, and the call did not say false: send the EXACT name
-        // (correct on 26.3.0) and be plain that this is unverified here.
-        return {
-          path: exactPath,
-          confirmed: false,
-          shape: `${shape.name} (${shape.note})`,
-          altPath: doubledPath
-        };
+        // Cannot look, and the call did not say false: send the EXACT name.
+        // Proven correct on 26.3.0 (S7-b), and if a future build ever does
+        // double the extension the SERVER resolves it via §11.2's
+        // `resolved_path` -- so the panel neither reports nor warns about the
+        // alternate name. (`altPath` used to ride along here purely to feed a
+        // warning line that fired on every export; both are gone.)
+        return { path: exactPath, confirmed: false, shape: `${shape.name} (${shape.note})` };
       }
       // 'missing': the documented "returned ok, wrote nothing" mode.
       log(`frame: ${label} returned ${JSON.stringify(returned)} but no file appeared at `
@@ -681,16 +719,19 @@ async function cprbSendFrameToComfyUI() {
     });
     if (!sent) return;
 
-    if (exported.confirmed) {
-      ok(`${what}: sent "${label}" @ ${seconds.toFixed(3)}s -> ${basename(exported.path)} `
-        + '(file confirmed on disk) -- add a "Frame from Premiere" node and press Run');
-    } else {
-      ok(`${what}: sent "${label}" @ ${seconds.toFixed(3)}s -> ${basename(exported.path)} `
-        + '-- Premiere reported success; this panel cannot read the folder to confirm it '
-        + '(localFileSystem "request"), so ComfyUI verifies the file');
-      logDebug(`${what}: if the node reports "frame not found", also check `
-        + `${basename(exported.altPath || '')} (doubled-extension regression)`);
-    }
+    // A SUCCESSFUL export must READ as successful. The unconfirmed branch used
+    // to hedge ("Premiere reported success; this panel cannot read the folder
+    // ...") and then add a doubled-extension warning -- on every single export,
+    // because the panel can never confirm under this manifest. Two rounds of
+    // checklist feedback show that a green line saying what it could not do
+    // scans as a failure. The facts have not changed; the framing has: the
+    // panel's job ends at "sent", ComfyUI's begins at "verified", and ComfyUI
+    // raises its own warning toast the moment a frame is missing (§11.2/§11.3).
+    // The doubled-extension case needs no advice at all now -- the server
+    // resolves it silently via `resolved_path`.
+    ok(`${what}: sent "${label}" @ ${seconds.toFixed(3)}s -> ${basename(exported.path)}`
+      + (exported.confirmed ? ' (file confirmed on disk)' : '')
+      + ' -- add a "Frame from Premiere" node and press Run');
     logDebug(`${what}: full path ${exported.path} (via ${exported.shape})`);
   } catch (error) {
     // Belt-and-braces: nothing may escape a click handler.
