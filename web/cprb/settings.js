@@ -19,8 +19,8 @@ export const SETTINGS = [
     tooltip:
       'When on: clicking "Frame → ComfyUI" or "Clip → ComfyUI" in the ' +
       'Premiere panel fills the matching node AND queues the workflow — no ' +
-      'trip back to ComfyUI to press Run (the Photoshop bridge behaviour). ' +
-      'When off: the node is filled in and you press Run yourself.'
+      'trip back to ComfyUI to press Run. When off: the node is filled in ' +
+      'and you press Run yourself.'
   },
   {
     id: 'cprb.versions',

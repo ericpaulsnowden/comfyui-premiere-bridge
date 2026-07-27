@@ -326,16 +326,44 @@ class PremiereSendResult:
     CATEGORY = "Premiere Bridge"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("written_path",)
+    OUTPUT_TOOLTIPS = (
+        "Absolute path of the file this node wrote or linked — the video's path when both "
+        "video and image are wired, otherwise the one result's path.",
+    )
     FUNCTION = "execute"
     OUTPUT_NODE = True
+    DESCRIPTION = (
+        "Sends a finished video and/or image result to Premiere — imported straight into a "
+        "bin in your open project, or dropped onto the active sequence at the playhead if "
+        "you turn that on. Works without the plugin too: the result is always written to "
+        "disk first, and if no Premiere panel is connected, this node's summary says where "
+        "to import it from by hand. Wire a video and/or an image (at least one); when both "
+        "are wired, both are sent in one run."
+    )
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {},
             "optional": {
-                "video": ("VIDEO",),
-                "image": ("IMAGE",),
+                "video": (
+                    "VIDEO",
+                    {
+                        "tooltip": (
+                            "A video result to send to Premiere. Wire this and/or image "
+                            "— at least one."
+                        )
+                    },
+                ),
+                "image": (
+                    "IMAGE",
+                    {
+                        "tooltip": (
+                            "An image result to send to Premiere, saved as a PNG. A "
+                            "batch sends only its first frame."
+                        )
+                    },
+                ),
                 "label": (
                     "STRING",
                     {
@@ -444,9 +472,7 @@ class PremiereSendResult:
         # for the plugin's Constants-enum/name-map lookup. A workflow saved
         # under v0.9.2's "None" wording means the same thing.
         wire_color = (
-            ""
-            if color_label in (COLOR_LABEL_DEFAULT, LEGACY_COLOR_LABEL_NONE)
-            else color_label
+            "" if color_label in (COLOR_LABEL_DEFAULT, LEGACY_COLOR_LABEL_NONE) else color_label
         )
         lines: list[str] = []
         resolved: list[Path] = []

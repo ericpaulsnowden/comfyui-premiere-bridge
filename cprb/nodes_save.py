@@ -152,9 +152,7 @@ def _materialize_video(video_dir: Path, index: int, video: Any) -> Path:
     """
     video_dir.mkdir(parents=True, exist_ok=True)
     dest = video_dir / f"{index:03d}_{sanitize_name(f'video_{index}')}.mp4"
-    materialize_video(
-        video, dest, node_name="PremiereSaveTimeline", input_name=f"video_{index}"
-    )
+    materialize_video(video, dest, node_name="PremiereSaveTimeline", input_name=f"video_{index}")
     return dest
 
 
@@ -292,14 +290,34 @@ class PremiereSaveTimeline:
     CATEGORY = "Premiere Bridge"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("timeline_path",)
+    OUTPUT_TOOLTIPS = (
+        "Absolute path of the written .xml timeline file — open it with Premiere's File > Import.",
+    )
     FUNCTION = "execute"
     OUTPUT_NODE = True
+    DESCRIPTION = (
+        "Writes an ordered set of clips — connected video_N inputs, and/or file paths typed "
+        "into the paths box — as a Premiere-importable timeline: a Final Cut Pro XML file, "
+        "plus an EDL and/or OTIO file if you turn those on. Clips are laid back-to-back on "
+        "one video track, video inputs first in socket order, then the paths lines top to "
+        "bottom. Works from plain files: open the written XML with Premiere's "
+        "File > Import — no plugin required."
+    )
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
         optional = _FlexibleOptionalVideoInputs(
             {
-                "video_1": ("VIDEO",),
+                "video_1": (
+                    "VIDEO",
+                    {
+                        "tooltip": (
+                            "A video to include in the timeline. Connect one to grow a "
+                            "fresh, empty video slot below it — there is no limit to how "
+                            "many you can wire in."
+                        )
+                    },
+                ),
                 # PROTOCOL.md §3.2 (owner ask 2026-07-20, parity with
                 # PremiereLoadTimeline's file bar): an OPTIONAL absolute-path
                 # override for the §2 output base. Lives in `optional` (not
@@ -327,12 +345,74 @@ class PremiereSaveTimeline:
         )
         return {
             "required": {
-                "sequence_name": ("STRING", {"default": DEFAULT_SEQUENCE_NAME}),
-                "fps": (FPS_CHOICES, {"default": DEFAULT_FPS}),
-                "media": (MEDIA_CHOICES, {"default": DEFAULT_MEDIA}),
-                "paths": ("STRING", {"default": "", "multiline": True, "forceInput": False}),
-                "write_edl": ("BOOLEAN", {"default": False}),
-                "write_otio": ("BOOLEAN", {"default": False}),
+                "sequence_name": (
+                    "STRING",
+                    {
+                        "default": DEFAULT_SEQUENCE_NAME,
+                        "tooltip": (
+                            "Name for the Premiere sequence — also names the output folder "
+                            "and the written .xml/.edl/.otio files (sanitized for the "
+                            "filesystem). Re-running with the same name overwrites this "
+                            "timeline's files in place."
+                        ),
+                    },
+                ),
+                "fps": (
+                    FPS_CHOICES,
+                    {
+                        "default": DEFAULT_FPS,
+                        "tooltip": (
+                            "Frame rate written into the timeline — set it to match your clips."
+                        ),
+                    },
+                ),
+                "media": (
+                    MEDIA_CHOICES,
+                    {
+                        "default": DEFAULT_MEDIA,
+                        "tooltip": (
+                            'How paths entries reach the timeline: "Link in place" '
+                            "references each file where it already is, with no copy; "
+                            '"Collect into folder" copies each one into this timeline\'s '
+                            "media/ folder first and references the copy instead. "
+                            "video_N inputs are always written into media/, either way."
+                        ),
+                    },
+                ),
+                "paths": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "forceInput": False,
+                        "tooltip": (
+                            "One absolute file path per line, added to the timeline after "
+                            "any connected video_N inputs. Blank lines and lines starting "
+                            "with # are ignored."
+                        ),
+                    },
+                ),
+                "write_edl": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": (
+                            "Also write a .edl file (CMX3600) alongside the .xml, for tools "
+                            "that read EDL instead of Final Cut Pro XML."
+                        ),
+                    },
+                ),
+                "write_otio": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": (
+                            "Also write a .otio file alongside the .xml, when the optional "
+                            "opentimelineio package is installed. Skipped with a warning in "
+                            "this run's summary if it isn't."
+                        ),
+                    },
+                ),
             },
             "optional": optional,
         }

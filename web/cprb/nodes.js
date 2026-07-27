@@ -522,7 +522,7 @@ function applyGating(state) {
   if (state.noteEl) {
     state.noteEl.textContent = remote ? 'Host machine only' : ''
     state.noteEl.title = remote
-      ? 'File browsing and folder reveal only work when ComfyUI is running on this machine (PROTOCOL.md §7.1).'
+      ? 'File browsing and folder reveal only work when ComfyUI is running on this machine.'
       : ''
   }
 }

@@ -320,8 +320,7 @@ def build_clip_shot(media: Path, start_seconds: float, end_seconds: float) -> Cl
         # Two different user-visible causes land here; say which one, because
         # the fix differs (re-trim the clip vs. the wrong media/in point).
         cause = (
-            f"the in point ({start:g}s) is at or past the end of the clip's media "
-            f"({end:.3f}s)"
+            f"the in point ({start:g}s) is at or past the end of the clip's media ({end:.3f}s)"
             if whole_file
             else f"the clip's out point ({end:g}s) is at or before its in point ({start:g}s)"
         )
@@ -429,11 +428,19 @@ class PremiereFrameSource:
     CATEGORY = CATEGORY_NAME
     RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING")
     RETURN_NAMES = ("image", "width", "height", "path")
+    OUTPUT_TOOLTIPS = (
+        "The exported frame.",
+        "The frame's pixel width.",
+        "The frame's pixel height.",
+        "The exported file actually read — may differ from the path widget by one "
+        "known Premiere naming quirk.",
+    )
     FUNCTION = "execute"
     DESCRIPTION = (
-        "Frame from Premiere -- the still Premiere exported when you clicked "
-        '"Frame → ComfyUI" in the panel, as an IMAGE plus its size. The path '
-        "fills in by itself; press Run when you want the frame."
+        'The still Premiere exported when you clicked "Frame → ComfyUI" in the panel, as '
+        "an IMAGE plus its pixel size. The path fills in by itself, and the workflow runs "
+        "automatically unless you turn that off in Settings → Premiere Bridge. You can also "
+        "point path at any image file by hand — no plugin connection required."
     )
 
     @classmethod
@@ -500,9 +507,7 @@ class PremiereFrameSource:
         if resolved is None:
             text = str(path or "").strip()
             raise ValueError(
-                UNSET_FRAME_MESSAGE
-                if not text
-                else f"Frame from Premiere: file not found: {text}"
+                UNSET_FRAME_MESSAGE if not text else f"Frame from Premiere: file not found: {text}"
             )
         image, width, height = load_image_file(resolved)
         return image, width, height, str(resolved)
@@ -546,12 +551,23 @@ class PremiereClipSource:
     CATEGORY = CATEGORY_NAME
     RETURN_TYPES = ("CPRB_SHOT_LIST", "STRING", "FLOAT", "FLOAT", "VIDEO")
     RETURN_NAMES = ("shots", "path", "start_seconds", "end_seconds", "video")
+    OUTPUT_TOOLTIPS = (
+        "A one-shot shot list for this clip — wire it into Get Shot, Get Shot Frame, "
+        "or Iterate Shots.",
+        "The clip's source media file, as an absolute path.",
+        "The clip's in-point in its source media, in seconds.",
+        "The clip's out-point in its source media, in seconds.",
+        "The clip, ready to wire into Send to Premiere, Save Video, or any VIDEO input.",
+    )
     FUNCTION = "execute"
     DESCRIPTION = (
-        "Clip from Premiere -- the clip you selected in the Timeline, as a one-shot "
-        "shot list (wire it into Get Shot / Get Shot Frame / Iterate Shots), its "
-        "media path and source in/out in seconds, and a ready-to-wire VIDEO. Nothing "
-        "is exported or re-encoded."
+        "The clip you selected in Premiere's Timeline, as a one-shot shot list (wire it "
+        "into Get Shot / Get Shot Frame / Iterate Shots), its media path and source "
+        "in/out in seconds, and a ready-to-wire VIDEO. Nothing is exported or re-encoded "
+        "— this just reads the clip's existing media file. The path and in/out fill in by "
+        'themselves when you click "Clip → ComfyUI" in the panel, and the workflow runs '
+        "automatically unless you turn that off in Settings → Premiere Bridge; you can "
+        "also type them by hand."
     )
 
     @classmethod

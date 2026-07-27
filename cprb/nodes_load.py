@@ -106,14 +106,43 @@ class PremiereLoadTimeline:
     CATEGORY = "Premiere Bridge"
     RETURN_TYPES = ("CPRB_SHOT_LIST", "INT", "STRING")
     RETURN_NAMES = ("shots", "count", "summary")
+    OUTPUT_TOOLTIPS = (
+        "The parsed shot list — wire it into Get Shot, Iterate Shots, or Get Shot Frame.",
+        "Number of shots in the list (after the skip_disabled filter).",
+        "One line per shot: index, name, source path, in-out frame range, and source fps.",
+    )
     FUNCTION = "execute"
+    DESCRIPTION = (
+        "Reads a timeline Premiere exported (File > Export > Final Cut Pro XML) into a shot "
+        "list ComfyUI can work with — wire shots into Get Shot, Iterate Shots, or Get Shot "
+        "Frame. Works from a plain exported file: no plugin required. Disabled clips are left "
+        "out by default; turn skip_disabled off to keep them (marked [DISABLED] in summary)."
+    )
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {
-                "file_path": ("STRING", {"default": ""}),
-                "skip_disabled": ("BOOLEAN", {"default": True}),
+                "file_path": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "tooltip": (
+                            "Absolute path to the XML file Premiere exported "
+                            "(File > Export > Final Cut Pro XML) — not a .prproj project file."
+                        ),
+                    },
+                ),
+                "skip_disabled": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": (
+                            "Leave clips Premiere marked disabled out of the shot list "
+                            "entirely. Off keeps them, marked [DISABLED] in the summary."
+                        ),
+                    },
+                ),
             }
         }
 
@@ -257,14 +286,50 @@ class PremiereGetShot:
         "width",
         "height",
     )
+    OUTPUT_TOOLTIPS = (
+        "The shot's source media file, as an absolute path.",
+        "The shot's length in seconds, at its own source fps.",
+        "The shot's in-point in seconds, from the start of its source file.",
+        "The shot's length in frames — feeds a loader's frame_load_cap.",
+        "The shot's in-point in frames, from the start of its source file — "
+        "feeds a loader's skip_first_frames.",
+        "The source file's frame rate.",
+        "The shot's name, from the timeline.",
+        "The source media's pixel width.",
+        "The source media's pixel height.",
+    )
     FUNCTION = "execute"
+    DESCRIPTION = (
+        "Pulls one shot's path, timing, and resolution out of a shot list — from Load "
+        "Premiere Timeline or Clip from Premiere, either way — by index. in_frame/"
+        "frame_count feed loaders that work in frames, such as Video Helper Suite's Load "
+        "Video (Path); in_seconds/duration_seconds suit loaders that work in time; width/"
+        "height suit a resize or Create Video node. index 0 is the first shot in the list."
+    )
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {
-                "shots": ("CPRB_SHOT_LIST",),
-                "index": ("INT", {"default": 0, "min": 0}),
+                "shots": (
+                    "CPRB_SHOT_LIST",
+                    {
+                        "tooltip": (
+                            "The shot list to pull from — from Load Premiere Timeline or "
+                            "Clip from Premiere."
+                        )
+                    },
+                ),
+                "index": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "tooltip": (
+                            "Which shot to pull, counting from 0 for the first shot in the list."
+                        ),
+                    },
+                ),
             }
         }
 
@@ -322,12 +387,33 @@ class PremiereIterateShots:
     CATEGORY = "Premiere Bridge"
     RETURN_TYPES = PremiereGetShot.RETURN_TYPES
     RETURN_NAMES = PremiereGetShot.RETURN_NAMES
+    OUTPUT_TOOLTIPS = PremiereGetShot.OUTPUT_TOOLTIPS
     OUTPUT_IS_LIST = (True,) * len(RETURN_TYPES)
     FUNCTION = "execute"
+    DESCRIPTION = (
+        "Runs everything downstream once per shot in a shot list — from Load Premiere "
+        "Timeline or Clip from Premiere, either way — using ComfyUI's list execution. Wire "
+        "path and the frame/seconds outputs the same way you would for Get Shot, and one "
+        "Run processes every shot in order. Outputs are the same path, timing, and "
+        "resolution fields as Get Shot, just fanned out one shot at a time. An empty shot "
+        "list simply runs nothing downstream."
+    )
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
-        return {"required": {"shots": ("CPRB_SHOT_LIST",)}}
+        return {
+            "required": {
+                "shots": (
+                    "CPRB_SHOT_LIST",
+                    {
+                        "tooltip": (
+                            "The shot list to fan out, one run per shot — from Load "
+                            "Premiere Timeline or Clip from Premiere."
+                        )
+                    },
+                )
+            }
+        }
 
     def execute(self, shots: list[dict[str, Any]]) -> tuple[list[Any], ...]:
         """Nine parallel lists, one element per shot, in shot order.
@@ -359,14 +445,41 @@ class PremiereShotFrame:
     CATEGORY = "Premiere Bridge"
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
+    OUTPUT_TOOLTIPS = ("The decoded preview frame at the shot's in-point.",)
     FUNCTION = "execute"
+    DESCRIPTION = (
+        "Decodes a single preview frame at one shot's in-point and returns it as an IMAGE — "
+        "from a shot list from Load Premiere Timeline or Clip from Premiere, either way. "
+        "Handy for previewing a shot, or feeding a first-frame reference into a generation, "
+        "without loading the whole clip. Takes the same shots list and index as Get Shot. "
+        "Decoding happens only when this node runs, so it costs nothing until you actually "
+        "need the preview."
+    )
 
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {
-                "shots": ("CPRB_SHOT_LIST",),
-                "index": ("INT", {"default": 0, "min": 0}),
+                "shots": (
+                    "CPRB_SHOT_LIST",
+                    {
+                        "tooltip": (
+                            "The shot list to pull from — from Load Premiere Timeline or "
+                            "Clip from Premiere."
+                        )
+                    },
+                ),
+                "index": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "tooltip": (
+                            "Which shot's in-point frame to decode, counting from 0 for "
+                            "the first shot in the list."
+                        ),
+                    },
+                ),
             }
         }
 
