@@ -696,6 +696,7 @@ Already accepted and relayed VERBATIM (minus `type`) by
 | `seconds` | frame only | Playhead `TickTime.seconds` — a number; where in the SEQUENCE the still came from |
 | `start_seconds` | clip only | The clip's in point **inside its SOURCE media**, seconds (`getInPoint()`, never `getStartTime()`) |
 | `end_seconds` | clip only | The clip's out point inside its source media, seconds (`getOutPoint()`). **EXCLUSIVE** — see §11.7 |
+| `nonce` | always (panels ≥ v0.11.0) | Unique per button press. `send_sync` broadcasts to EVERY open ComfyUI tab, and §11.3's auto-run must queue ONCE — the first tab to claim the nonce in `localStorage` (shared across same-origin tabs) runs; the rest only fill widgets. Absent (older panel): every tab auto-runs; accepted skew behaviour |
 
 **The server checks the path and says so, additively.** Two fields are
 ADDED to the relayed payload (nothing the plugin sent is ever rewritten):
@@ -751,12 +752,26 @@ Policy — decided, and not for implementation to reopen:
   its exact menu name, and carrying the full path. Nothing else in the UI
   would show that an export succeeded and landed nowhere — and nothing is
   lost, because the file is already on disk.
-- **NEVER auto-queue.** The panel button loads the frame; the USER presses
-  Run. An export that silently spends GPU time is a trap, and exporting a
-  frame just to look at it before deciding to run anything is normal use.
-  (This is also what keeps the broadcast benign: `send_sync` reaches EVERY
-  connected frontend, so all open ComfyUI tabs get the path — harmless when
-  nothing queues, five prompts if anything did.)
+- **AUTO-RUN, on by default** — owner decision 2026-07-27, REVERSING this
+  section's original "never auto-queue" policy: the round trip must work
+  like the Photoshop bridge, where "the user doesn't need to intervene."
+  After a successful widget fill the relay calls `app.queuePrompt(0)` (the
+  identical call and failure handling as cpsb's `maybeAutoQueue`), so the
+  Premiere button press IS the whole gesture: export → fill → run → result
+  back in the bin. The `cprb.autoRun` setting (Settings → Premiere Bridge,
+  boolean, default true) restores the old press-Run-yourself behaviour.
+  Guard rails, in order:
+  - **Never on a missing file**: `path_exists === false` keeps its warning
+    toast and queues nothing — auto-running a run that can only fail would
+    turn one bad export into two errors.
+  - **Once across tabs**: `send_sync` reaches every open tab; the panel's
+    `nonce` (§11.2) is claimed in `localStorage` — the one store those tabs
+    share — and only the claiming tab queues. Claims are pruned to the
+    newest 20.
+  - **A queue failure is LOUD**: the user was just told "Running the
+    workflow…", so a rejected `queuePrompt` (typically some other invalid
+    node in the graph) raises its own warning toast naming the cause,
+    never a silent nothing.
 - **`path_exists === false` ⇒ a WARNING toast, not "press Run when ready".**
   The widgets are still filled in (the path is the best record of what
   Premiere claimed, and a retry then needs only the button), but the success
@@ -814,9 +829,25 @@ Policy — decided, and not for implementation to reopen:
   so the frontend's usual 3-decimal rounding could shift an in point across a
   frame boundary.
 - Outputs, in this order: `shots` (`CPRB_SHOT_LIST`), `path` (STRING),
-  `start_seconds` (FLOAT), `end_seconds` (FLOAT). The last three report the
-  **EFFECTIVE** values actually used — after the clamping and whole-file
-  fallback below — not necessarily the raw widget values.
+  `start_seconds` (FLOAT), `end_seconds` (FLOAT), `video` (VIDEO — appended
+  in v0.11.0; §8's append-only rule is why it is LAST). `path`/
+  `start_seconds`/`end_seconds` report the **EFFECTIVE** values actually
+  used — after the clamping and whole-file fallback below — not necessarily
+  the raw widget values.
+- **`video` is core's own `VideoFromFile`** (`comfy_api.input_impl`), built
+  lazily from the media path plus the clip's trim window — nothing decodes
+  until a downstream node asks. This is what makes the clip wire DIRECTLY
+  into any plain `VIDEO` input (`Send to Premiere`, core `SaveVideo`, API
+  video-editing nodes) — none of which accept a bare path string, which was
+  the M2 gap the owner hit on 2026-07-27. It is built from the RAW widget
+  values, not the effective ones: `end_seconds <= 0` maps to core's own
+  `(0, 0)` "whole file" trim sentinel, so an untrimmed clip stays honestly
+  untrimmed and `Send to Premiere` can still LINK IT IN PLACE instead of
+  re-encoding (its trim check keys off `get_active_trim_window()`); a set
+  out point maps to `start_time=start, duration=end-start`. The class is
+  reached through the `_video_from_file_class` seam — the pack's ONLY
+  ComfyUI-internal class dependency; everything else duck-types — so tests
+  stub it and a pre-VIDEO ComfyUI gets a clear "update ComfyUI" error.
 - `shots` is the reuse that matters: **one** shot in §6.2's frozen dict
   shape, so a clip lifted off the Premiere timeline wires straight into the
   already-shipped `Get Shot`, `Get Shot Frame` and `Iterate Shots` nodes

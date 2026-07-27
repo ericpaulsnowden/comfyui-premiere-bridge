@@ -26,10 +26,10 @@ whether it round-tripped. It comes back obviously, unmistakably inverted.
 1. In **Premiere**, open a sequence and park the playhead on a frame.
 2. In the **ComfyUI Bridge panel**, confirm the status pill says connected,
    then click **"Frame → ComfyUI"**. The exported frame's path lands in the
-   **Frame from Premiere** node and a toast says so. *Nothing queues* — the
-   bridge never runs a graph for you.
-3. Back in ComfyUI, press **Run**.
-4. In **Premiere**, open the **"ComfyUI Results"** bin.
+   **Frame from Premiere** node **and the workflow runs by itself** — the
+   toast says "Running the workflow…". (Prefer pressing Run yourself? Turn
+   off **Settings → Premiere Bridge → Auto-run**.)
+3. In **Premiere**, open the **"ComfyUI Results"** bin.
 
 ### What success looks like
 

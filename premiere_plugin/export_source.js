@@ -59,6 +59,18 @@ const CPRB_TICKS_PER_SECOND = 254016000000;
 const CPRB_EXPORT_POLL_TRIES = 8;
 const CPRB_EXPORT_POLL_MS = 120;
 
+/** Monotonic tail for {@link cprbExportNonce} within one panel session. */
+let cprbNonceSeq = 0;
+
+/** A unique id stamped onto every export_ready message (PROTOCOL.md §11.2).
+ * The ComfyUI frontend broadcasts arrivals to EVERY open tab; with auto-run
+ * on (§11.3), the nonce is what lets exactly ONE tab claim the queue --
+ * localStorage-shared across tabs -- instead of N tabs queueing N runs. */
+function cprbExportNonce() {
+  cprbNonceSeq += 1;
+  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}-${cprbNonceSeq}`;
+}
+
 /** Serializes the two buttons against themselves and each other. Premiere
  * "races with itself still writing the previous file" when exports overlap
  * (RESEARCH A), and a double-click must not produce two half-exports. */
@@ -715,7 +727,8 @@ async function cprbSendFrameToComfyUI() {
       path: exported.path,
       label,
       ticks,
-      seconds
+      seconds,
+      nonce: cprbExportNonce()
     });
     if (!sent) return;
 
@@ -729,9 +742,12 @@ async function cprbSendFrameToComfyUI() {
     // raises its own warning toast the moment a frame is missing (§11.2/§11.3).
     // The doubled-extension case needs no advice at all now -- the server
     // resolves it silently via `resolved_path`.
+    // "ComfyUI takes it from here" rather than "press Run": with auto-run on
+    // (the §11.3 default) the workflow is already queueing as this line
+    // prints, and the panel cannot read the frontend's setting to say which.
     ok(`${what}: sent "${label}" @ ${seconds.toFixed(3)}s -> ${basename(exported.path)}`
       + (exported.confirmed ? ' (file confirmed on disk)' : '')
-      + ' -- add a "Frame from Premiere" node and press Run');
+      + ' -- ComfyUI takes it from here');
     logDebug(`${what}: full path ${exported.path} (via ${exported.shape})`);
   } catch (error) {
     // Belt-and-braces: nothing may escape a click handler.
@@ -1084,11 +1100,12 @@ async function cprbSendClipToComfyUI() {
       path: mediaPath,
       label,
       start_seconds: startSeconds,
-      end_seconds: endSeconds
+      end_seconds: endSeconds,
+      nonce: cprbExportNonce()
     });
     if (!sent) return;
     ok(`${what}: sent "${label}" ${startSeconds.toFixed(3)}s-${endSeconds.toFixed(3)}s `
-      + `-> ${basename(mediaPath)} -- add a "Clip from Premiere" node and press Run`);
+      + `-> ${basename(mediaPath)} -- ComfyUI takes it from here`);
     logDebug(`${what}: full path ${mediaPath} (source in/out read off the CAST `
       + `ClipProjectItem; found via ${route})`);
   } catch (error) {

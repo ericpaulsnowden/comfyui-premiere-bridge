@@ -28,7 +28,7 @@ It removes the manual export/import step. Three honest levels:
 | [**Get Shot Frame**](#get-shot-frame) | A preview frame from one shot | not needed |
 | [**Send to Premiere**](#send-to-premiere) | Your result → straight into a Premiere bin | **optional** |
 | [**Frame from Premiere**](#frame-from-premiere) | The still at Premiere's playhead → your graph | **needed in practice** |
-| [**Clip from Premiere**](#clip-from-premiere) | The clip you selected in Premiere → your graph | **needed in practice** |
+| [**Clip from Premiere**](#clip-from-premiere) | The clip you selected in Premiere → your graph, as a ready-to-wire VIDEO | **needed in practice** |
 
 **What the three levels mean:**
 
@@ -394,9 +394,12 @@ on your next Run once the panel is back — you don't have to touch the node.
 > `PremiereFrameSource`
 
 Hands your graph **the still under Premiere's playhead**. Click
-**Frame → ComfyUI** in the panel and this node's `path` fills in by itself; then
-press Run. It never queues a graph for you, so exporting a frame just to look at
-it costs nothing.
+**Frame → ComfyUI** in the panel and this node's `path` fills in by itself —
+**and the workflow runs**, no trip back to ComfyUI. One button in Premiere is
+the whole gesture; with **Send to Premiere** at the end of the graph, the result
+is back in your bin before you've switched windows. Prefer to press Run
+yourself? Turn off **Settings → Premiere Bridge → Auto-run** and the button only
+fills the node.
 
 **Inputs.** `path` (STRING, default empty) — an ordinary, visible text field. The
 panel writes it; you can also read it (a second confirmation that something
@@ -426,13 +429,14 @@ you to press the panel button. If you're not running the panel, export a still
 from Premiere yourself and use ComfyUI's `LoadImage` — it does the same job.
 
 **Gotchas.** Premiere's frame export can report success and write nothing, so
-**ComfyUI checks the file itself** and warns you immediately rather than letting
-you discover it at Run time. If Premiere doubled the file extension (a defect
-fixed in 26.2.2), the `path` *output* is the file that really exists while the
-widget still shows what Premiere claimed. Clicking the button updates **every**
-matching node in **every** open ComfyUI tab, and tells you when there are none
-rather than succeeding into thin air. Alpha is dropped rather than composited,
-and the result is always a single image, never a batch.
+**ComfyUI checks the file itself** and warns you immediately — and a missing
+file never auto-runs, so one bad export can't become two errors. If Premiere
+doubled the file extension (a defect fixed in 26.2.2), the `path` *output* is
+the file that really exists while the widget still shows what Premiere claimed.
+Clicking the button updates **every** matching node in **every** open ComfyUI
+tab (only one tab runs the workflow), and tells you when there are none rather
+than succeeding into thin air. Alpha is dropped rather than composited, and the
+result is always a single image, never a batch.
 
 ### Clip from Premiere
 
@@ -454,16 +458,27 @@ source.
 
 All three are ordinary visible fields the panel writes.
 
-**Outputs.** `shots` (`CPRB_SHOT_LIST`) · `path` (STRING) · `start_seconds`
-(FLOAT) · `end_seconds` (FLOAT) — the last three report the values actually used
-after any clamping.
+Like Frame → ComfyUI above, the panel button **also runs the workflow** unless
+you turn off **Settings → Premiere Bridge → Auto-run**.
 
-`shots` is the important one: a **one-shot list in exactly the same shape Load
-Premiere Timeline produces**, so a clip lifted off your timeline plugs straight
-into **Get Shot**, **Iterate Shots** and **Get Shot Frame** — and through Get Shot
-into VideoHelperSuite-style loaders — with nothing new to learn. The plain
-`path` / `start_seconds` / `end_seconds` outputs are there for loaders that just
-want a file and a range.
+**Outputs.** `shots` (`CPRB_SHOT_LIST`) · `path` (STRING) · `start_seconds`
+(FLOAT) · `end_seconds` (FLOAT) · `video` (VIDEO) — the three middle ones report
+the values actually used after any clamping.
+
+**`video` is the one to reach for first**: a real, ready-to-wire VIDEO — the
+clip's file plus its exact in/out, opened lazily, nothing decoded until a
+downstream node asks. It plugs **directly** into anything with a plain VIDEO
+input: **Send to Premiere**, core's **Save Video**, or a video-editing model
+node (the Gemini/Veo-style API nodes). No load node, no path juggling — select
+the clip in Premiere, click the button, and the video is already a socket in
+your graph.
+
+`shots` is for the shot-list world: a **one-shot list in exactly the same shape
+Load Premiere Timeline produces**, so a clip lifted off your timeline plugs
+straight into **Get Shot**, **Iterate Shots** and **Get Shot Frame** — and
+through Get Shot into VideoHelperSuite-style loaders. The plain `path` /
+`start_seconds` / `end_seconds` outputs are there for loaders that just want a
+file and a range.
 
 **Without the panel.** Type the clip's media path and its in/out in seconds. That
 works, but you're reading those numbers off Premiere by hand.

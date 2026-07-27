@@ -362,6 +362,53 @@ def build_clip_shot(media: Path, start_seconds: float, end_seconds: float) -> Cl
     return ClipShot(shot=shot, start_seconds=start, end_seconds=end, notes=notes)
 
 
+def _video_from_file_class() -> Any:
+    """ComfyUI core's ``VideoFromFile`` -- the class behind every VIDEO socket.
+
+    A seam, not an inline import: this is the pack's ONLY dependency on a
+    ComfyUI-internal class (everything else duck-types, per §1's ethos), and
+    the test suite runs without ComfyUI on ``sys.path``, so tests monkeypatch
+    this function with a stub and assert the trim arithmetic against it.
+    Imported lazily for the same reason as ``torch``/``PIL`` above.
+
+    Raises:
+        RuntimeError: this ComfyUI predates the core VIDEO type (the same
+            2025+ floor the README's install section already states).
+    """
+    try:
+        from comfy_api.input_impl import VideoFromFile
+    except ImportError as exc:
+        raise RuntimeError(
+            "Clip from Premiere: this ComfyUI build has no core VIDEO type "
+            "(comfy_api.input_impl.VideoFromFile) -- update ComfyUI to a 2025+ "
+            "build to use the video output."
+        ) from exc
+    return VideoFromFile
+
+
+def _clip_video(media: Path, start_seconds: Any, end_seconds: Any) -> Any:
+    """*media* as a core ``VIDEO`` object, trimmed to the clip's in/out.
+
+    Built from the RAW widget values (clamped, not the effective values
+    ``build_clip_shot`` resolves) so the untrimmed case stays HONESTLY
+    untrimmed: core's ``VideoInput.get_active_trim_window()`` uses
+    ``(0.0, 0.0)`` as its own "whole file" sentinel, and ``Send to
+    Premiere``'s link-in-place branch keys off exactly that -- substituting
+    the probed duration for an unset out point would make every whole-file
+    clip report itself trimmed and force a needless re-encode on the way
+    back into Premiere. ``VideoFromFile`` is LAZY: nothing opens the file
+    here, so this costs nothing until a downstream node asks for pixels.
+    """
+    start = max(_as_float(start_seconds), 0.0)
+    end = _as_float(end_seconds)
+    # end <= 0 means "whole file" (§11.2) -> duration 0, core's own sentinel
+    # for "until the end". A positive end is EXCLUSIVE-by-seconds already, so
+    # the duration is a plain difference; build_clip_shot has raised before
+    # this point whenever end <= start.
+    duration = (end - start) if end > 0 else 0.0
+    return _video_from_file_class()(str(media), start_time=start, duration=duration)
+
+
 class PremiereFrameSource:
     """The frame Premiere just exported, as an IMAGE (PROTOCOL.md §11).
 
@@ -481,16 +528,30 @@ class PremiereClipSource:
     just wants the file. Those three outputs report the EFFECTIVE values
     (see :func:`build_clip_shot` for the one fallback that can change them:
     an unset out point becomes the media's full duration).
+
+    ``video`` is a real ComfyUI ``VIDEO`` socket -- core's own
+    ``VideoFromFile``, LAZY and zero-copy (nothing is decoded until a
+    downstream node asks for pixels), so it plugs directly into
+    ``Send to Premiere``, a ``SaveVideo``, or any third-party node that
+    declares a plain ``VIDEO`` input (a video-editing model node, for
+    instance) -- none of which accept a bare path string. Built from the
+    RAW widget values, not the effective ones ``build_clip_shot`` resolves,
+    so it keeps the SAME "0 means the whole file" sentinel core's own
+    ``VideoInput.get_active_trim_window()`` documents: an unset out point
+    yields an untrimmed ``VideoFromFile`` that ``Send to Premiere`` can
+    still LINK IN PLACE, rather than one that always reports itself
+    trimmed and forces a needless re-encode.
     """
 
     CATEGORY = CATEGORY_NAME
-    RETURN_TYPES = ("CPRB_SHOT_LIST", "STRING", "FLOAT", "FLOAT")
-    RETURN_NAMES = ("shots", "path", "start_seconds", "end_seconds")
+    RETURN_TYPES = ("CPRB_SHOT_LIST", "STRING", "FLOAT", "FLOAT", "VIDEO")
+    RETURN_NAMES = ("shots", "path", "start_seconds", "end_seconds", "video")
     FUNCTION = "execute"
     DESCRIPTION = (
         "Clip from Premiere -- the clip you selected in the Timeline, as a one-shot "
-        "shot list (wire it into Get Shot / Get Shot Frame / Iterate Shots) plus its "
-        "media path and source in/out in seconds. Nothing is exported or re-encoded."
+        "shot list (wire it into Get Shot / Get Shot Frame / Iterate Shots), its "
+        "media path and source in/out in seconds, and a ready-to-wire VIDEO. Nothing "
+        "is exported or re-encoded."
     )
 
     @classmethod
@@ -596,7 +657,7 @@ class PremiereClipSource:
 
     def execute(
         self, path: str = "", start_seconds: float = 0.0, end_seconds: float = 0.0
-    ) -> tuple[list[dict[str, Any]], str, float, float]:
+    ) -> tuple[list[dict[str, Any]], str, float, float, Any]:
         media = _existing_file(path)
         if media is None:
             text = str(path or "").strip()
@@ -607,6 +668,7 @@ class PremiereClipSource:
             )
         resolved = build_clip_shot(media, _as_float(start_seconds), _as_float(end_seconds))
         shot = resolved.shot
+        video = _clip_video(media, start_seconds, end_seconds)
         # ALWAYS logged, not just on a fallback: whether Premiere's
         # getOutPoint() is inclusive or exclusive is undocumented, and this
         # node commits to EXCLUSIVE (see build_clip_shot). These are the exact
@@ -630,4 +692,4 @@ class PremiereClipSource:
             # has no UI summary output (its shot list IS the payload), so the
             # server log is where they land.
             logger.info("cprb clip_source: %s", "; ".join(resolved.notes))
-        return [shot], str(media), resolved.start_seconds, resolved.end_seconds
+        return [shot], str(media), resolved.start_seconds, resolved.end_seconds, video

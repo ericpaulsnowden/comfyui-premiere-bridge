@@ -21,6 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import cprb.nodes_source as _nodes_source_module
 from cprb.context import BridgeContext
 from cprb.nodes_load import PremiereGetShot, PremiereIterateShots
 from cprb.nodes_source import (
@@ -53,6 +54,37 @@ CLIP_FPS = 24
 CLIP_FRAMES = 96  # 4.0s at 24fps
 CLIP_WIDTH = 32
 CLIP_HEIGHT = 24
+
+
+#: The REAL factory, captured at import time -- before the autouse fixture
+#: below replaces the module attribute -- so the error-path test can still
+#: reach it.
+_REAL_VIDEO_FACTORY = _nodes_source_module._video_from_file_class
+
+
+class _StubVideoFromFile:
+    """Stands in for core's ``VideoFromFile`` (unimportable without ComfyUI).
+
+    Records the constructor arguments so tests can assert the §11.5 trim
+    arithmetic -- the ONLY thing the node contributes on top of core's class.
+    """
+
+    def __init__(self, file: str, *, start_time: float = 0, duration: float = 0):
+        self.file = file
+        self.start_time = start_time
+        self.duration = duration
+
+    def get_active_trim_window(self) -> tuple[float, float]:
+        return float(self.start_time), float(self.duration)
+
+
+@pytest.fixture(autouse=True)
+def _stub_video_from_file(monkeypatch: pytest.MonkeyPatch):
+    """``comfy_api`` is not importable outside a running ComfyUI, so the
+    factory seam is stubbed for every test (see ``_video_from_file_class``)."""
+    monkeypatch.setattr(
+        _nodes_source_module, "_video_from_file_class", lambda: _StubVideoFromFile
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -267,7 +299,7 @@ def test_frame_source_is_changed_is_missing_for_empty_and_absent_paths(tmp_path:
 
 def test_clip_source_emits_exactly_the_frozen_shot_keys(tmp_path: Path) -> None:
     media = _write_tiny_video(tmp_path / "media" / "shot_01.mp4")
-    shots, path, start, end = PremiereClipSource().execute(str(media), 1.0, 2.0)
+    shots, path, start, end, _video = PremiereClipSource().execute(str(media), 1.0, 2.0)
 
     assert isinstance(shots, list)
     assert len(shots) == 1  # §11: exactly one shot
@@ -278,7 +310,7 @@ def test_clip_source_emits_exactly_the_frozen_shot_keys(tmp_path: Path) -> None:
 
 def test_clip_source_shot_values_are_derived_from_the_probed_media(tmp_path: Path) -> None:
     media = _write_tiny_video(tmp_path / "media" / "shot_01.mp4")
-    shots, _path, _start, _end = PremiereClipSource().execute(str(media), 1.0, 2.5)
+    shots, _path, _start, _end, _video = PremiereClipSource().execute(str(media), 1.0, 2.5)
     shot = shots[0]
 
     assert shot["name"] == "shot_01"  # the file stem
@@ -299,7 +331,7 @@ def test_clip_source_shot_values_are_derived_from_the_probed_media(tmp_path: Pat
 def test_clip_source_shot_plugs_into_the_shipped_get_shot_node(tmp_path: Path) -> None:
     """The whole point of emitting CPRB_SHOT_LIST (§6.2 / §1's reuse ethos)."""
     media = _write_tiny_video(tmp_path / "media" / "shot_01.mp4")
-    shots, _p, _s, _e = PremiereClipSource().execute(str(media), 1.0, 2.0)
+    shots, _p, _s, _e, _video = PremiereClipSource().execute(str(media), 1.0, 2.0)
 
     (
         path,
@@ -325,7 +357,7 @@ def test_clip_source_shot_plugs_into_the_shipped_get_shot_node(tmp_path: Path) -
 
 def test_clip_source_shot_plugs_into_the_shipped_iterate_shots_node(tmp_path: Path) -> None:
     media = _write_tiny_video(tmp_path / "media" / "shot_01.mp4")
-    shots, _p, _s, _e = PremiereClipSource().execute(str(media), 0.0, 1.0)
+    shots, _p, _s, _e, _video = PremiereClipSource().execute(str(media), 0.0, 1.0)
 
     columns = PremiereIterateShots().execute(shots)
 
@@ -336,7 +368,7 @@ def test_clip_source_shot_plugs_into_the_shipped_iterate_shots_node(tmp_path: Pa
 
 def test_clip_source_unset_end_seconds_falls_back_to_the_full_duration(tmp_path: Path) -> None:
     media = _write_tiny_video(tmp_path / "media" / "whole.mp4")
-    shots, _path, start, end = PremiereClipSource().execute(str(media), 0.0, 0.0)
+    shots, _path, start, end, _video = PremiereClipSource().execute(str(media), 0.0, 0.0)
 
     assert pytest.approx(end) == CLIP_FRAMES / CLIP_FPS  # 4.0s
     assert start == 0.0
@@ -458,8 +490,20 @@ def test_both_nodes_declare_the_contracted_category_and_outputs() -> None:
 
     assert PremiereFrameSource.RETURN_TYPES == ("IMAGE", "INT", "INT", "STRING")
     assert PremiereFrameSource.RETURN_NAMES == ("image", "width", "height", "path")
-    assert PremiereClipSource.RETURN_TYPES == ("CPRB_SHOT_LIST", "STRING", "FLOAT", "FLOAT")
-    assert PremiereClipSource.RETURN_NAMES == ("shots", "path", "start_seconds", "end_seconds")
+    assert PremiereClipSource.RETURN_TYPES == (
+        "CPRB_SHOT_LIST",
+        "STRING",
+        "FLOAT",
+        "FLOAT",
+        "VIDEO",
+    )
+    assert PremiereClipSource.RETURN_NAMES == (
+        "shots",
+        "path",
+        "start_seconds",
+        "end_seconds",
+        "video",
+    )
 
 
 def test_widgets_are_declared_with_the_contracted_names_and_order() -> None:
@@ -568,3 +612,46 @@ def test_clip_source_always_logs_the_frames_it_derived(tmp_path: Path, caplog) -
     assert "out=48" in line
     assert "frame_count=24" in line
     assert "EXCLUSIVE" in line
+
+
+# --------------------------------------------------- §11.5 the VIDEO output
+
+
+def test_clip_source_video_output_carries_the_trim_window(tmp_path: Path) -> None:
+    """A trimmed clip yields VideoFromFile(path, start_time=in, duration=span)."""
+    media = _write_tiny_video(tmp_path / "clip.mp4")
+    *_rest, video = PremiereClipSource().execute(str(media), 1.0, 2.5)
+
+    assert video.file == str(media)
+    assert video.start_time == 1.0
+    assert video.duration == 1.5  # 2.5 - 1.0: the span, not the out point
+
+
+def test_clip_source_whole_file_video_is_honestly_untrimmed(tmp_path: Path) -> None:
+    """end_seconds=0 must map to core's own (0, 0) whole-file sentinel.
+
+    Send to Premiere's link-in-place branch keys off get_active_trim_window()
+    == (0, 0); substituting the probed duration would make every whole-file
+    clip report itself trimmed and force a needless re-encode on the way back.
+    """
+    media = _write_tiny_video(tmp_path / "clip.mp4")
+    *_rest, video = PremiereClipSource().execute(str(media), 0.0, 0.0)
+
+    assert video.get_active_trim_window() == (0.0, 0.0)
+
+
+def test_clip_source_start_only_trim_keeps_duration_zero(tmp_path: Path) -> None:
+    """In point set, out point unset: trim from start_time until the end."""
+    media = _write_tiny_video(tmp_path / "clip.mp4")
+    *_rest, video = PremiereClipSource().execute(str(media), 1.0, 0.0)
+
+    assert video.start_time == 1.0
+    assert video.duration == 0.0  # core's "until the end"
+
+
+def test_video_factory_error_names_the_fix() -> None:
+    """Without ComfyUI the real factory must fail with advice, not a bare
+    ImportError -- via the import-time capture, since the autouse fixture
+    replaces the module attribute before any test body runs."""
+    with pytest.raises(RuntimeError, match="update ComfyUI"):
+        _REAL_VIDEO_FACTORY()

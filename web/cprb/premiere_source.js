@@ -41,11 +41,18 @@
  *    Accepted and harmless: worst case a node the user didn't mean gets a
  *    path it will simply re-read on the next Run.
  *
- * 3. WE NEVER AUTO-QUEUE. A deliberate decision, matching the conservative
- *    end of the sibling pack's behaviour: pressing a button in Premiere
- *    stages the input, it does not spend GPU time. The user presses Run.
- *    (It also keeps consequence 1 benign — a broadcast to five tabs that
- *    auto-queued would be five prompts.)
+ * 3. WE AUTO-RUN BY DEFAULT (owner decision 2026-07-27, reversing the
+ *    original never-auto-queue policy): a button press in Premiere fills the
+ *    node AND queues the workflow, exactly like the Photoshop bridge — "the
+ *    user doesn't need to intervene." The `cprb.autoRun` setting (Settings →
+ *    Premiere Bridge) turns it back off. What keeps consequence 1 benign now
+ *    is the NONCE: the panel stamps each export_ready with a unique `nonce`,
+ *    and only the FIRST tab to claim it in localStorage — which is shared
+ *    across same-origin tabs, unlike anything else in this event's path —
+ *    queues. A payload without a nonce (an older panel) still auto-runs;
+ *    with several tabs open on mismatched panel/pack versions that can
+ *    queue once per tab, accepted until the panel updates (single-tab is
+ *    the norm, and the fill itself was always broadcast anyway).
  *
  * Nothing in here may throw into the event handler: a UI relay that breaks
  * the extension is worse than one that misses an update, so every step is
@@ -56,6 +63,7 @@
 import { app } from '../../../scripts/app.js'
 import { api } from '../../../scripts/api.js'
 import { warn } from './api.js'
+import { getAutoRun } from './settings.js'
 
 /**
  * §11's `kind` → the frozen node class id it targets (§8: class ids are
@@ -183,6 +191,82 @@ function nodeCountLabel(n) {
 /** A finite number formatted to 2dp, or null when the field wasn't sent. */
 function seconds(value) {
   return Number.isFinite(value) ? Number(value).toFixed(2) : null
+}
+
+// ---------------------------------------------------------------------------
+// Auto-run (§11.3 policy, owner decision 2026-07-27)
+// ---------------------------------------------------------------------------
+
+/** localStorage key prefix for claimed nonces; entries are pruned so the
+ * store never accumulates (only the newest few claims matter). */
+const NONCE_PREFIX = 'cprb-autorun:'
+const NONCE_KEEP = 20
+
+/**
+ * Atomically-enough claims *nonce* for THIS tab: returns true when this tab
+ * is the first to see it. localStorage is shared across same-origin tabs, so
+ * whichever tab's event handler runs first wins and the rest see the claim.
+ * (A true race window of a few microseconds exists between get and set —
+ * accepted: the alternative is a SharedWorker, and the failure mode is one
+ * duplicate queue, not corruption.) Storage failures (private windows,
+ * quota) claim successfully so a broken store degrades to "every tab
+ * queues", never to "nothing runs".
+ * @param {unknown} nonce
+ * @returns {boolean}
+ */
+function claimNonce(nonce) {
+  if (typeof nonce !== 'string' || !nonce) return true // older panel: no dedupe possible
+  const key = NONCE_PREFIX + nonce
+  try {
+    if (localStorage.getItem(key) !== null) return false
+    localStorage.setItem(key, String(Date.now()))
+    // Prune: keep the newest NONCE_KEEP claims, drop the rest.
+    const mine = []
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(NONCE_PREFIX)) mine.push(k)
+    }
+    if (mine.length > NONCE_KEEP) {
+      mine
+        .sort((a, b) => Number(localStorage.getItem(a)) - Number(localStorage.getItem(b)))
+        .slice(0, mine.length - NONCE_KEEP)
+        .forEach((k) => localStorage.removeItem(k))
+    }
+    return true
+  } catch (error) {
+    warn('nonce claim failed — auto-running anyway', error)
+    return true
+  }
+}
+
+/**
+ * Queues the workflow after a successful widget fill, when policy allows:
+ * the `cprb.autoRun` setting is on AND this tab won the nonce claim. Uses
+ * the documented `app.queuePrompt(number, batchCount = 1)` overload with
+ * `0` ("append normally") — the identical call and failure handling as the
+ * sibling pack's `maybeAutoQueue` (cpsb pasteback.js). A queue failure
+ * (e.g. the graph has some OTHER invalid node) surfaces as a toast, not a
+ * silent nothing: the user was told "running", so a non-run must be loud.
+ * @param {object} spec - the `KINDS` entry, for the toast.
+ * @param {unknown} nonce - `payload.nonce`, panel-stamped (§11.2).
+ * @returns {boolean} whether a queue was actually attempted.
+ */
+function maybeAutoRun(spec, nonce) {
+  if (!getAutoRun()) return false
+  if (!claimNonce(nonce)) return false
+  app.queuePrompt(0).catch((error) => {
+    warn('auto-run after Premiere send failed', error)
+    toast({
+      severity: 'warn',
+      summary: `${spec.display}: workflow did not start`,
+      detail:
+        'The node was filled in, but queueing the workflow failed — usually ' +
+        'another node in the graph is invalid. Fix it and press Run.\n' +
+        `(${error?.message || error})`,
+      life: 10000
+    })
+  })
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -376,12 +460,14 @@ function onExportReady(payload) {
     if (at !== null) where = ` @ ${at}s`
   }
 
+  const queued = maybeAutoRun(spec, payload?.nonce)
+
   toast({
     severity: 'info',
     summary: `${spec.display}: ${label}`,
     detail:
-      `${basename(writePath)}${where} → ${nodeCountLabel(updated)} updated. Press Run ` +
-      'when ready.',
+      `${basename(writePath)}${where} → ${nodeCountLabel(updated)} updated. ` +
+      (queued ? 'Running the workflow…' : 'Press Run when ready.'),
     life: 5000
   })
 }

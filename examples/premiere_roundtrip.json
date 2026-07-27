@@ -21,7 +21,7 @@
       "title": "Premiere round trip - quickstart",
       "properties": {},
       "widgets_values": [
-        "PREMIERE ROUND TRIP - frame out, inverted frame back in.\n\n1) In Premiere, open a sequence and park the playhead on the frame you want.\n2) In the ComfyUI Bridge panel, click \"Frame -> ComfyUI\". The path lands in\n   the \"Frame from Premiere\" node below (nothing queues - that's on purpose).\n3) Press Run here. The frame is colour-inverted and sent straight back.\n4) In Premiere, look in the \"ComfyUI Results\" bin: a clip with INVERTED\n   colours means the whole round trip worked.\n\nOptional: switch \"insert_at_playhead\" on in Send to Premiere and the result\nalso drops onto the active sequence at your playhead."
+        "PREMIERE ROUND TRIP - frame out, inverted frame back in.\n\n1) In Premiere, open a sequence and park the playhead on the frame you want.\n2) In the ComfyUI Bridge panel, click \"Frame -> ComfyUI\". The path lands in\n   the \"Frame from Premiere\" node below AND the workflow runs by itself -\n   nothing to press here. (Settings > Premiere Bridge > Auto-run turns\n   that off if you'd rather press Run yourself.)\n3) In Premiere, look in the \"ComfyUI Results\" bin: a clip with INVERTED\n   colours means the whole round trip worked - one button, whole loop.\n\nClip -> ComfyUI works the same way, and its node now has a VIDEO output\nyou can wire straight into Send to Premiere, Save Video, or a\nvideo-editing model node.\n\nOptional: switch \"insert_at_playhead\" on in Send to Premiere and the result\nalso drops onto the active sequence at your playhead."
       ]
     },
     {
