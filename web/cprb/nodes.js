@@ -1332,3 +1332,79 @@ async function onOpenFolderClickSave(state) {
     setStatus(state, error.message || 'Could not open folder.', true)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Segment socket labels (user-facing vocabulary, v0.12.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * The socket whose *name* is `shots` on every node that speaks the segment
+ * list. Its NAME is frozen; only its LABEL changes. See
+ * {@link relabelSegmentSockets}.
+ */
+const SEGMENT_SOCKET_NAME = 'shots'
+const SEGMENT_SOCKET_LABEL = 'segments'
+
+/** Classes carrying a `shots` OUTPUT, and those carrying it as an INPUT. */
+const SEGMENT_OUTPUT_CLASSES = new Set(['PremiereLoadTimeline', 'PremiereClipSource'])
+const SEGMENT_INPUT_CLASSES = new Set([
+  'PremiereGetShot',
+  'PremiereIterateShots',
+  'PremiereShotFrame'
+])
+
+/**
+ * Shows the segment list socket as **segments** while its underlying `name`
+ * stays `shots`.
+ *
+ * WHY IT IS DONE THIS WAY, and why the name must never be renamed instead:
+ * ComfyUI reconciles a saved workflow's links against the live node
+ * definition BY INPUT NAME. Renaming the input from `shots` to `segments`
+ * makes every existing saved workflow load with that wire SILENTLY GONE —
+ * measured on the rig 2026-07-27: `link: null` with `has_errors: false`, so
+ * nothing warns the user at all. The socket TYPE, by contrast, is not part of
+ * that match (a type-only mismatch keeps the link), which is why
+ * `CPRB_SEGMENT_LIST` could be renamed safely and `shots` could not.
+ *
+ * `label` is litegraph's own display field and is what the canvas renders
+ * (verified live: `label` set, `name` unchanged, and `serialize()` still
+ * writes `name: "shots"`). So the user reads "segments" everywhere while
+ * every workflow Eric has already saved keeps working.
+ *
+ * Applied on creation AND after configure(), because a workflow load restores
+ * the saved inputs/outputs arrays and would otherwise drop the label.
+ * @param {object} node - LiteGraph node instance.
+ */
+export function relabelSegmentSockets(node) {
+  try {
+    if (!node) return
+    const cls = nodeClassOf(node) || node.type
+    const relabel = (sockets) => {
+      for (const socket of sockets || []) {
+        if (socket && socket.name === SEGMENT_SOCKET_NAME) {
+          socket.label = SEGMENT_SOCKET_LABEL
+        }
+      }
+    }
+    if (SEGMENT_OUTPUT_CLASSES.has(cls)) relabel(node.outputs)
+    if (SEGMENT_INPUT_CLASSES.has(cls)) relabel(node.inputs)
+    else if (SEGMENT_OUTPUT_CLASSES.has(cls)) relabel(node.inputs)
+
+    if (!node.__cprbSegmentConfigureHooked) {
+      node.__cprbSegmentConfigureHooked = true
+      const original = node.onConfigure
+      node.onConfigure = function cprbOnConfigure(info) {
+        const result = original?.apply(this, arguments)
+        // configure() replaced the socket objects; re-apply the label.
+        try {
+          relabelSegmentSockets(this)
+        } catch (error) {
+          api.warn('relabelSegmentSockets after configure failed', error)
+        }
+        return result
+      }
+    }
+  } catch (error) {
+    api.warn('relabelSegmentSockets failed', error)
+  }
+}

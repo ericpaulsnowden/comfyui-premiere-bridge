@@ -22,10 +22,10 @@ It removes the manual export/import step. Three honest levels:
 | Node | What it does | Panel |
 |---|---|---|
 | [**Save Premiere Timeline**](#save-premiere-timeline) | Your shots → a Premiere-importable sequence | not needed |
-| [**Load Premiere Timeline**](#load-premiere-timeline) | Your Premiere edit → a shot list | not needed |
-| [**Get Shot**](#get-shot) | One shot from the list, as paths + frames + seconds | not needed |
-| [**Iterate Shots**](#iterate-shots) | *Every* shot at once, so one Run does the whole edit | not needed |
-| [**Get Shot Frame**](#get-shot-frame) | A preview frame from one shot | not needed |
+| [**Load Premiere Timeline**](#load-premiere-timeline) | Your Premiere edit → a segment list | not needed |
+| [**Get Segment**](#get-shot) | One shot from the list, as paths + frames + seconds | not needed |
+| [**Iterate Segments**](#iterate-shots) | *Every* shot at once, so one Run does the whole edit | not needed |
+| [**Get Segment Frame**](#get-shot-frame) | A preview frame from one segment | not needed |
 | [**Send to Premiere**](#send-to-premiere) | Your result → straight into a Premiere bin | **optional** |
 | [**Frame from Premiere**](#frame-from-premiere) | The still at Premiere's playhead → your graph | **needed in practice** |
 | [**Clip from Premiere**](#clip-from-premiere) | The clip you selected in Premiere → your graph, as a ready-to-wire VIDEO | **needed in practice** |
@@ -53,8 +53,8 @@ except for the last two nodes, which are the convenience.**
 
 1. **Into ComfyUI:** in Premiere, `File > Export > Final Cut Pro XML`. Point
    **Load Premiere Timeline** at that `.xml` and you have your whole edit as a
-   shot list. **Iterate Shots** then fans your graph out over every cut, so one
-   Run restyles the entire edit; **Get Shot** and **Get Shot Frame** handle one
+   segment list. **Iterate Segments** then fans your graph out over every cut, so one
+   Run restyles the entire edit; **Get Segment** and **Get Segment Frame** handle one
    cut at a time.
 2. **Back into Premiere:** wire your results into **Save Premiere Timeline**. It
    writes a folder containing the media plus an importable FCP7 XML timeline. In
@@ -118,16 +118,16 @@ All eight are under the **Premiere Bridge** category. The **bold name** is what
 you search for in the node menu; the `code name` beside it is the class id you'll
 see in a saved workflow's JSON and in error messages.
 
-Four of them speak a custom socket type, **`CPRB_SHOT_LIST`** — the shot list
+Four of them speak a custom socket type, **`CPRB_SEGMENT_LIST`** — the segment list
 that **Load Premiere Timeline** and **Clip from Premiere** produce, and that
-**Get Shot**, **Iterate Shots** and **Get Shot Frame** consume. It only connects
+**Get Segment**, **Iterate Segments** and **Get Segment Frame** consume. It only connects
 to those sockets; a third-party node simply won't accept the wire.
 
 ### Save Premiere Timeline
 
 > **Plugin: not needed.** · `PremiereSaveTimeline`
 
-Assembles finished shots into a **Premiere-importable timeline**. Wire in as many
+Assembles finished segments into a **Premiere-importable timeline**. Wire in as many
 VIDEO outputs as you like — a new `video_N` socket appears each time you connect
 the last one, like ComfyUI's image-batch nodes — and/or paste absolute file
 paths, one per line. The node writes everything into one folder and hands back
@@ -210,7 +210,7 @@ it runs on, since they'd be browsing the wrong filesystem.
 
 > **Plugin: not needed.** · `PremiereLoadTimeline`
 
-Reads your Premiere edit into ComfyUI as a **shot list**. Export it from Premiere
+Reads your Premiere edit into ComfyUI as a **segment list**. Export it from Premiere
 first (`File > Export > Final Cut Pro XML`), then point this node at the `.xml`.
 This is the "restyle my whole edit" starting point: parse once, then process each
 cut through any video workflow you already have.
@@ -222,9 +222,9 @@ cut through any video workflow you already have.
 | `file_path` | STRING | empty | The `.xml` Premiere exported. |
 | `skip_disabled` | BOOLEAN | **on** | Leave out clips you disabled in Premiere. |
 
-**Outputs.** `shots` (`CPRB_SHOT_LIST`) — the edit in timeline order across all
-video tracks · `count` (INT) · `summary` (STRING) — one readable line per shot,
-so wiring it into any text-preview node gives you a free shot sheet.
+**Outputs.** `shots` (`CPRB_SEGMENT_LIST`) — the edit in timeline order across all
+video tracks · `count` (INT) · `summary` (STRING) — one readable line per segment,
+so wiring it into any text-preview node gives you a free segment sheet.
 
 **On-node buttons.** **Browse…** picks the `.xml` from a folder browser instead
 of pasting a path; **Open folder** reveals it on disk. Both hide themselves,
@@ -236,7 +236,7 @@ labels and filters, audio tracks, disabled clips, file-by-id references,
 generator clips with no media, and the `-1` boundaries Premiere writes around
 transitions. A compound/nested clip is returned as **one** shot — the clipitems
 *inside* it are not walked, so a nested sequence never leaks its contents into
-your shot list as extra cuts.
+your segment list as extra cuts.
 
 **Gotchas.**
 
@@ -251,17 +251,17 @@ your shot list as extra cuts.
   or a generator with no media on disk. Likewise `width`/`height` of `0` means
   "the export didn't say", not "zero pixels".
 - An XML with no video clips at all is a hard error naming the likely cause,
-  rather than a silently empty shot list.
+  rather than a silently empty segment list.
 
-### Get Shot
+### Get Segment
 
 > **Plugin: not needed.** · `PremiereGetShot`
 
-Pulls **one shot out of a shot list** by number, in every form a video loader
+Pulls **one segment out of a segment list** by number, in every form a video loader
 might want. This is the node that connects a Premiere edit to the rest of the
 ecosystem.
 
-**Inputs.** `shots` (`CPRB_SHOT_LIST` socket) · `index` (INT, default `0`,
+**Inputs.** `shots` (`CPRB_SEGMENT_LIST` socket) · `index` (INT, default `0`,
 0-based).
 
 **Outputs**, in socket order: `path` (STRING) · `duration_seconds` (FLOAT) ·
@@ -273,44 +273,44 @@ Seconds for time-based loaders; frames for VideoHelperSuite's
 `frame_load_cap`. `frame_count` already accounts for an exclusive out point, so
 there's no off-by-one to correct.
 
-**Gotchas.** `index` has no upper limit, so overshooting the shot count is the
+**Gotchas.** `index` has no upper limit, so overshooting the segment count is the
 realistic mistake — you get an error naming the valid range, but only once the
-run reaches this node, not when you press Run. An **empty** shot list is a hard
-error here (use [**Iterate Shots**](#iterate-shots) if you want an empty edit to
+run reaches this node, not when you press Run. An **empty** segment list is a hard
+error here (use [**Iterate Segments**](#iterate-shots) if you want an empty edit to
 simply do nothing downstream). All values are computed at the shot's *own* frame
 rate, never the sequence rate, so for a clip Premiere conformed to a different
 rate prefer `in_seconds` / `duration_seconds` over the frame numbers.
 
-### Iterate Shots
+### Iterate Segments
 
 > **Plugin: not needed.** · `PremiereIterateShots`
 
 **Every shot at once, as lists** — so ComfyUI fans the rest of your graph out
 over every cut and one Run processes the whole edit. This is the node that
-actually delivers "restyle my whole edit"; **Get Shot** handles one cut, this one
+actually delivers "restyle my whole edit"; **Get Segment** handles one cut, this one
 handles all of them. No index, no loop node, no widgets — just wire `shots` in.
 
-**Input.** `shots` (`CPRB_SHOT_LIST` socket).
+**Input.** `shots` (`CPRB_SEGMENT_LIST` socket).
 
-**Outputs**, in socket order — the same nine as Get Shot, each one a *list* with
-an entry per shot: `path` · `duration_seconds` · `in_seconds` · `frame_count` ·
+**Outputs**, in socket order — the same nine as Get Segment, each one a *list* with
+an entry per segment: `path` · `duration_seconds` · `in_seconds` · `frame_count` ·
 `in_frame` · `fps` · `name` · `width` · `height`.
 
-**Gotchas.** An empty shot list is *not* an error here — every output becomes an
+**Gotchas.** An empty segment list is *not* an error here — every output becomes an
 empty list and the graph downstream simply does nothing, which can look like a
 Run that silently did nothing at all. It also has no `skip_disabled` of its own:
 that filter belongs to **Load Premiere Timeline**, so if you turn it off there,
 disabled clips get processed here too.
 
-### Get Shot Frame
+### Get Segment Frame
 
 > **Plugin: not needed.** · `PremiereShotFrame`
 
-Decodes **one frame** from a shot as an IMAGE — a thumbnail at that shot's in
+Decodes **one frame** from a segment as an IMAGE — a thumbnail at that segment's in
 point. Good for eyeballing what you're about to process, or for feeding a single
 frame from your edit into an image workflow.
 
-**Inputs.** `shots` (`CPRB_SHOT_LIST` socket) · `index` (INT, default `0`).
+**Inputs.** `shots` (`CPRB_SEGMENT_LIST` socket) · `index` (INT, default `0`).
 
 **Output.** `image` (IMAGE). This node shows nothing by itself — wire `image`
 into a **Preview Image** (or anything else) or you'll see no frame.
@@ -322,9 +322,9 @@ into a **Preview Image** (or anything else) or you'll see no frame.
   preview, not a basis for frame-accurate work.
 - An in point past the end of the media gives you the last decodable frame rather
   than an error.
-- Its `index` is completely independent of any **Get Shot** node's `index`, so
+- Its `index` is completely independent of any **Get Segment** node's `index`, so
   it's easy to preview shot 2 while processing shot 5.
-- It takes a `shots` list, which **Iterate Shots** does not output — so it can't
+- It takes a `shots` list, which **Iterate Segments** does not output — so it can't
   be fanned out that way. Drive it with an `index` instead.
 
 ### Send to Premiere
@@ -463,7 +463,7 @@ All three are ordinary visible fields the panel writes.
 Like Frame → ComfyUI above, the panel button **also runs the workflow** unless
 you turn off **Settings → Premiere Bridge → Auto-run**.
 
-**Outputs.** `shots` (`CPRB_SHOT_LIST`) · `path` (STRING) · `start_seconds`
+**Outputs.** `shots` (`CPRB_SEGMENT_LIST`) · `path` (STRING) · `start_seconds`
 (FLOAT) · `end_seconds` (FLOAT) · `video` (VIDEO) — the three middle ones report
 the values actually used after any clamping.
 
@@ -475,10 +475,10 @@ node (the Gemini/Veo-style API nodes). No load node, no path juggling — select
 the clip in Premiere, click the button, and the video is already a socket in
 your graph.
 
-`shots` is for the shot-list world: a **one-shot list in exactly the same shape
+`shots` is for the shot-list world: a **one-segment list in exactly the same shape
 Load Premiere Timeline produces**, so a clip lifted off your timeline plugs
-straight into **Get Shot**, **Iterate Shots** and **Get Shot Frame** — and
-through Get Shot into VideoHelperSuite-style loaders. The plain `path` /
+straight into **Get Segment**, **Iterate Segments** and **Get Segment Frame** — and
+through Get Segment into VideoHelperSuite-style loaders. The plain `path` /
 `start_seconds` / `end_seconds` outputs are there for loaders that just want a
 file and a range.
 

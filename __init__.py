@@ -81,9 +81,9 @@ _routes.register(_context)
 _NODE_SPECS = [
     ("nodes_save", "PremiereSaveTimeline", "Save Premiere Timeline"),
     ("nodes_load", "PremiereLoadTimeline", "Load Premiere Timeline"),
-    ("nodes_load", "PremiereGetShot", "Get Shot"),
-    ("nodes_load", "PremiereIterateShots", "Iterate Shots"),
-    ("nodes_load", "PremiereShotFrame", "Get Shot Frame"),
+    ("nodes_load", "PremiereGetShot", "Get Segment"),
+    ("nodes_load", "PremiereIterateShots", "Iterate Segments"),
+    ("nodes_load", "PremiereShotFrame", "Get Segment Frame"),
     ("nodes_send", "PremiereSendResult", "Send to Premiere"),
     # M2's return direction (PROTOCOL.md §11): what Premiere sends INTO a graph.
     ("nodes_source", "PremiereFrameSource", "Frame from Premiere"),

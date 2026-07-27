@@ -8,7 +8,7 @@ as `PROTOCOL.md §N`.
 
 Contents: §1 scope & tiers · §2 output conventions · §3 Save Premiere
 Timeline · §4 emitted FCP7 XML (xmeml) · §5 emitted EDL · §6 Load Premiere
-Timeline & Get Shot · §7 routes & frontend · §8 versioning & stability ·
+Timeline & Get Segment · §7 routes & frontend · §8 versioning & stability ·
 §9 spikes · §10 Tier 2 plugin websocket (M1: ComfyUI → Premiere) ·
 §11 Tier 2 M2: Premiere → ComfyUI.
 (§10.6 adds the frontend's own `cprb.send_result` toast event.)
@@ -207,7 +207,7 @@ duration in sequence frames:
   occurrences may be `<file id="file-i"/>` self-closing references).
 
 v1 emits `in=0, out=D` (whole file). Sub-range clips arrive with §6's
-round-trip work (a shot list re-emitted as a timeline keeps its in/out).
+round-trip work (a segment list re-emitted as a timeline keeps its in/out).
 
 ## §5 Emitted EDL (CMX3600)
 
@@ -240,9 +240,9 @@ nodes → per-shot processing ("restyle my whole edit").
 
 - Widget: `file_path` (STRING — absolute path of a Premiere-exported
   `.xml`).
-- Outputs: `shots` (custom type `CPRB_SHOT_LIST`), `count` (INT),
-  `summary` (STRING — one line per shot: index, name, source path, in/out
-  timecode) — wire `summary` into a Show Text node for a free shot sheet.
+- Outputs: `shots` (custom type `CPRB_SEGMENT_LIST`), `count` (INT),
+  `summary` (STRING — one line per segment: index, name, source path, in/out
+  timecode) — wire `summary` into a Show Text node for a free segment sheet.
 - Parses EVERY `clipitem` on every video track of the first `<sequence>`,
   in ascending `start` order (track 1 first on ties). Per shot it captures:
   `name`, `path` (decoded §4.3 pathurl; percent-decoding + `file://` and
@@ -262,14 +262,14 @@ nodes → per-shot processing ("restyle my whole edit").
   video clipitems errors loudly (wrong file, not an empty result).
 - `IS_CHANGED` → file mtime/size so a re-export re-runs.
 
-### §6.2 `CPRB_SHOT_LIST`
+### §6.2 `CPRB_SEGMENT_LIST`
 
 A plain python `list[dict]` with the §6.1 keys. Custom-typed so it can only
 wire into cprb consumers; contents are documented here and FROZEN.
 
-### §6.3 `PremiereGetShot` (display: "Get Shot")
+### §6.3 `PremiereGetShot` (display: "Get Segment")
 
-- Inputs: `shots` (CPRB_SHOT_LIST); widget `index` (INT, 0-based, default
+- Inputs: `shots` (CPRB_SEGMENT_LIST); widget `index` (INT, 0-based, default
   0; out of range ⇒ clear error naming the valid range).
 - Outputs, in this order (owner reorder 2026-07-19 — the "seconds" pair and
   the "frame" pair each swapped so the load-cap value leads its partner,
@@ -278,7 +278,7 @@ wire into cprb consumers; contents are documented here and FROZEN.
   (INT), `in_frame` (INT), `fps` (FLOAT — source fps), `name` (STRING),
   `width` (INT), `height` (INT). ⚠ Reordering outputs shifts socket
   indices, so a workflow saved before this change re-wires by position on
-  load — acceptable pre-release; re-check any existing Get Shot wiring once.
+  load — acceptable pre-release; re-check any existing Get Segment wiring once.
 - The frame outputs feed VHS `Load Video (Path)`'s `frame_load_cap`
   (`frame_count`) / `skip_first_frames` (`in_frame`) directly; the seconds
   outputs suit core loaders; `width`/`height` feed resize/crop or a Create
@@ -287,29 +287,29 @@ wire into cprb consumers; contents are documented here and FROZEN.
   conformed to a different rate, prefer the SECONDS outputs, always
   real-time-correct.
 
-### §6.4 `PremiereIterateShots` (display: "Iterate Shots")
+### §6.4 `PremiereIterateShots` (display: "Iterate Segments")
 
-The answer to "how do I process every shot" (owner ask 2026-07-19) — ComfyUI
+The answer to "how do I process every segment" (owner ask 2026-07-19) — ComfyUI
 has no for-loop, so this fans out via list execution, exactly like EPSNodes'
 multi-select notebook.
 
-- Input: `shots` (CPRB_SHOT_LIST); widget `skip_disabled` is unnecessary
+- Input: `shots` (CPRB_SEGMENT_LIST); widget `skip_disabled` is unnecessary
   (Load already filtered) — none.
-- Outputs mirror Get Shot's set (`path, duration_seconds, in_seconds,
+- Outputs mirror Get Segment's set (`path, duration_seconds, in_seconds,
   frame_count, in_frame, fps, name, width, height`) but ALL declared
-  `OUTPUT_IS_LIST` — one element per shot, in shot order. ComfyUI then runs
-  every downstream node once per shot from a SINGLE queue: wire `path`+the
+  `OUTPUT_IS_LIST` — one element per segment, in shot order. ComfyUI then runs
+  every downstream node once per segment from a SINGLE queue: wire `path`+the
   frame outputs into VHS `Load Video (Path)` and one Run processes the
-  whole edit shot by shot. An empty shot list yields empty lists (downstream
+  whole edit shot by shot. An empty segment list yields empty lists (downstream
   simply doesn't run) — not an error.
 
-### §6.5 `PremiereShotFrame` (display: "Get Shot Frame")
+### §6.5 `PremiereShotFrame` (display: "Get Segment Frame")
 
 Optional preview thumbnail (owner ask 2026-07-19 "can we pull a preview
 frame… if easy/reliable"). SEPARATE node so the decode cost/failure never
-touches Get Shot's cheap metadata path.
+touches Get Segment's cheap metadata path.
 
-- Inputs: `shots` (CPRB_SHOT_LIST); widget `index` (INT, like Get Shot).
+- Inputs: `shots` (CPRB_SEGMENT_LIST); widget `index` (INT, like Get Segment).
 - Output: `image` (IMAGE) — one frame decoded via PyAV at the shot's
   `in` point (seek to `in_seconds`, decode the nearest frame, return HWC
   RGB float [0,1], batch 1). Best-effort: media offline/undecodable ⇒ a
@@ -398,8 +398,26 @@ versions (mismatch = pulled-but-not-restarted; cpsb pattern), plus:
   `web/cprb/version.js`, lockstepped by `scripts/bump_version.py`; every
   push bumps ≥ patch and is tagged `vX.Y.Z`; docs-only changes don't bump.
 - FROZEN once shipped: node class ids, route paths, §4/§5 file semantics,
-  §6.2 shot-dict keys. New fields may be added; existing ones never change
-  meaning.
+  §6.2 segment-dict keys, **and every INPUT socket name**. New fields may be
+  added; existing ones never change meaning.
+- **Input socket names are frozen for a measured reason.** ComfyUI reconciles a
+  saved workflow's links against the live node definition BY INPUT NAME.
+  Measured on the rig 2026-07-27: with the name changed and everything else
+  identical, a saved link loads as `link: null` **and `has_errors: false`** —
+  the wire is silently gone with no warning anywhere. The socket TYPE is *not*
+  part of that match (a type-only mismatch keeps the link), which is why
+  `CPRB_SHOT_LIST` → `CPRB_SEGMENT_LIST` was safe in v0.12.0 and renaming
+  `shots` was not.
+- **User-facing vocabulary vs. internal names (v0.12.0).** Users read
+  **segment** everywhere: node menu names (*Get Segment*, *Iterate Segments*,
+  *Get Segment Frame*), the `CPRB_SEGMENT_LIST` type, every tooltip,
+  description and message, and all docs. INTERNALLY the pack still says
+  `shot` — the socket `name` (`shots`), the Python identifiers, the §6.2 dict
+  keys, and the frozen class ids (`PremiereGetShot`, `PremiereIterateShots`,
+  `PremiereShotFrame`). That split is deliberate, not drift: the internal
+  names are frozen compatibility surface, and the socket LABEL carries the
+  user-facing word instead (`web/cprb/nodes.js`
+  `relabelSegmentSockets`).
 
 ## §9 Spikes (details in docs/SPIKES.md)
 
@@ -828,7 +846,7 @@ Policy — decided, and not for implementation to reopen:
   Both FLOATs are declared `round: False` — a frame is ~0.0417 s at 23.976,
   so the frontend's usual 3-decimal rounding could shift an in point across a
   frame boundary.
-- Outputs, in this order: `shots` (`CPRB_SHOT_LIST`), `path` (STRING),
+- Outputs, in this order: `shots` (`CPRB_SEGMENT_LIST`), `path` (STRING),
   `start_seconds` (FLOAT), `end_seconds` (FLOAT), `video` (VIDEO — appended
   in v0.11.0; §8's append-only rule is why it is LAST). `path`/
   `start_seconds`/`end_seconds` report the **EFFECTIVE** values actually
@@ -850,12 +868,12 @@ Policy — decided, and not for implementation to reopen:
   stub it and a pre-VIDEO ComfyUI gets a clear "update ComfyUI" error.
 - `shots` is the reuse that matters: **one** shot in §6.2's frozen dict
   shape, so a clip lifted off the Premiere timeline wires straight into the
-  already-shipped `Get Shot`, `Get Shot Frame` and `Iterate Shots` nodes
-  with no new consumer code (and through `Get Shot` into VHS's
+  already-shipped `Get Segment`, `Get Segment Frame` and `Iterate Segments` nodes
+  with no new consumer code (and through `Get Segment` into VHS's
   `Load Video (Path)`, exactly as a loaded timeline's shots already do). The
   plain `path` / `start_seconds` / `end_seconds` outputs exist for
   seconds-based loaders that want a path and a range directly.
-- Building that shot dict — §6.2's keys VERBATIM (`name, path, start, end,
+- Building that segment dict — §6.2's keys VERBATIM (`name, path, start, end,
   in, out, sequence_fps, source_fps, enabled, width, height`). The panel
   sends a path and two times, so the rest comes from probing the file with
   `cprb.probe.probe_media`, the same probe `Save Premiere Timeline` uses:
@@ -865,7 +883,7 @@ Policy — decided, and not for implementation to reopen:
   | `name` | the media file's STEM. §11.2's `label` (Premiere's own clip name, possibly a timeline rename) is deliberately NOT a widget here, so the stem is the honest answer |
   | `path` | the resolved media file |
   | `in` | `round(start_seconds * source_fps)` — SOURCE frames, §6.1's meaning |
-  | `out` | `round(end_seconds * source_fps)` — source frames, `end_seconds` EXCLUSIVE, which is what makes `Get Shot`'s `frame_count = out - in` come out right |
+  | `out` | `round(end_seconds * source_fps)` — source frames, `end_seconds` EXCLUSIVE, which is what makes `Get Segment`'s `frame_count = out - in` come out right |
   | `start` / `end` | `-1` — UNRESOLVED. §6.1's `start`/`end` are TIMELINE frames and a clip selection carries no timeline position; `-1` is the same "no value" marker §6.1's parser already yields for a missing `<start>`, and no §6.3/§6.4/§6.5 consumer reads either key |
   | `source_fps` | probed native rate (`MediaInfo.fps`) |
   | `sequence_fps` | DEFAULTED to the same value as `source_fps` |
@@ -882,9 +900,9 @@ Policy — decided, and not for implementation to reopen:
   exclusive is undocumented and this node commits to EXCLUSIVE; that line is
   what makes one live run settle it against Premiere's own clip-duration
   readout, instead of an off-by-one frame surfacing invisibly downstream in
-  `Get Shot`'s `frame_count`.
+  `Get Segment`'s `frame_count`.
 - Defaults and clamps, each one **stated out loud** in the server log rather
-  than applied silently (this node has no UI summary; its shot list IS the
+  than applied silently (this node has no UI summary; its segment list IS the
   payload): a negative `start_seconds` clamps to 0; `end_seconds <= 0` means
   **whole file** and becomes the media's full probed duration; a span shorter
   than one frame emits a single frame (`out = in + 1`) rather than a

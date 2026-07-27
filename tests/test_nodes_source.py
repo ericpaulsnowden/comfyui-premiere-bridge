@@ -6,7 +6,7 @@ PyAV, then read straight back through the nodes. Nothing about
 ``PremiereFrameSource``'s tensor or ``PremiereClipSource``'s §6.2 shot dict
 is mocked, because those two shapes ARE the contract other nodes consume.
 
-``CPRB_SHOT_LIST`` compatibility is asserted the only way that actually
+``CPRB_SEGMENT_LIST`` compatibility is asserted the only way that actually
 proves it: by feeding the emitted shot into the SHIPPED
 ``PremiereGetShot``/``PremiereIterateShots`` from :mod:`cprb.nodes_load`.
 """
@@ -35,7 +35,7 @@ from cprb.nodes_source import (
 
 #: PROTOCOL.md §6.2's FROZEN shot-dict key set (§6.1 lists them). A clip
 #: source shot must carry EXACTLY these -- no extras, none missing -- or it
-#: is not a CPRB_SHOT_LIST.
+#: is not a CPRB_SEGMENT_LIST.
 SHOT_KEYS = {
     "name",
     "path",
@@ -345,7 +345,7 @@ def test_clip_source_shot_values_are_derived_from_the_probed_media(tmp_path: Pat
 
 
 def test_clip_source_shot_plugs_into_the_shipped_get_shot_node(tmp_path: Path) -> None:
-    """The whole point of emitting CPRB_SHOT_LIST (§6.2 / §1's reuse ethos)."""
+    """The whole point of emitting CPRB_SEGMENT_LIST (§6.2 / §1's reuse ethos)."""
     media = _write_tiny_video(tmp_path / "media" / "shot_01.mp4")
     shots, _p, _s, _e, _video = PremiereClipSource().execute(str(media), 1.0, 2.0)
 
@@ -507,7 +507,7 @@ def test_both_nodes_declare_the_contracted_category_and_outputs() -> None:
     assert PremiereFrameSource.RETURN_TYPES == ("IMAGE", "INT", "INT", "STRING")
     assert PremiereFrameSource.RETURN_NAMES == ("image", "width", "height", "path")
     assert PremiereClipSource.RETURN_TYPES == (
-        "CPRB_SHOT_LIST",
+        "CPRB_SEGMENT_LIST",
         "STRING",
         "FLOAT",
         "FLOAT",

@@ -22,9 +22,9 @@ Two flavors, because Premiere gives two genuinely different things:
 * **Clip from Premiere** -- NO export at all: the selected clip's OWN media
   file plus its source in/out. The heavy lifting (decode, trim) is left to
   the existing ecosystem, which is why this node emits the pack's already-
-  shipped ``CPRB_SHOT_LIST`` (PROTOCOL.md §6.2) as its primary output: one
+  shipped ``CPRB_SEGMENT_LIST`` (PROTOCOL.md §6.2) as its primary output: one
   shot, in the FROZEN §6.2 shape, so it plugs straight into the shipped
-  ``Get Shot`` / ``Get Shot Frame`` / ``Iterate Shots`` nodes with no new
+  ``Get Segment`` / ``Get Segment Frame`` / ``Iterate Segments`` nodes with no new
   consumer written for it (§1's ethos: existing nodes first).
 
 Module-scope imports stay ComfyUI-free and dependency-light, exactly like
@@ -51,7 +51,7 @@ logger = logging.getLogger("cprb")
 CATEGORY_NAME = "Premiere Bridge"
 
 #: PROTOCOL.md §6.2's ``start``/``end`` (a shot's position on the TIMELINE)
-#: for a shot that has no timeline position to report.
+#: for a segment that has no timeline position to report.
 #: :class:`PremiereClipSource` is exactly that case: §11's ``export_ready``
 #: clip payload carries the clip's SOURCE in/out and nothing about where it
 #: sits in the sequence, so inventing ``start=0`` would be a fabricated
@@ -59,8 +59,8 @@ CATEGORY_NAME = "Premiere Bridge"
 #: ``timeline_read._resolve_track_spans`` (which keeps a literal ``-1`` when
 #: it cannot recover a span) and ``nodes_load._summary_line`` (which prints
 #: ``[TIMELINE POSITION UNRESOLVED]`` for it) -- so reusing it means every
-#: existing consumer already handles this shot correctly. Nothing in
-#: ``Get Shot`` / ``Iterate Shots`` / ``Get Shot Frame`` reads ``start``/
+#: existing consumer already handles this segment correctly. Nothing in
+#: ``Get Segment`` / ``Iterate Segments`` / ``Get Segment Frame`` reads ``start``/
 #: ``end`` at all; they work purely off ``in``/``out``/``source_fps``.
 UNRESOLVED_TIMELINE_FRAME = -1
 
@@ -190,7 +190,7 @@ def load_image_file(path: Path) -> tuple[Any, int, int]:
     Returns a ``torch.float32`` tensor of shape ``[1, H, W, 3]`` (batch of
     1, HWC, RGB) with values in ``[0, 1]`` -- the standard ComfyUI IMAGE
     shape/dtype, identical to what :func:`cprb.frame_extract.extract_frame`
-    already produces for ``Get Shot Frame``. Greyscale, palette and RGBA
+    already produces for ``Get Segment Frame``. Greyscale, palette and RGBA
     sources are converted to RGB (an alpha channel is dropped, not
     composited -- Premiere's PNG frame export is opaque).
 
@@ -234,8 +234,8 @@ class ClipShot:
     """One Premiere clip selection resolved into PROTOCOL.md §6.2 shape.
 
     Attributes:
-        shot: The §6.2 shot dict -- FROZEN keys, so it wires straight into
-            ``Get Shot`` / ``Get Shot Frame`` / ``Iterate Shots``.
+        shot: The §6.2 segment dict -- FROZEN keys, so it wires straight into
+            ``Get Segment`` / ``Get Segment Frame`` / ``Iterate Segments``.
         start_seconds: The EFFECTIVE source in point actually used (after
             clamping/fallback), not necessarily the raw widget value.
         end_seconds: The EFFECTIVE source out point actually used.
@@ -267,7 +267,7 @@ def build_clip_shot(media: Path, start_seconds: float, end_seconds: float) -> Cl
 
     * ``in``/``out`` -- ``round(seconds * source_fps)``. ``end_seconds`` is
       treated as EXCLUSIVE (the out point is one frame past the last frame
-      the user selected), which is what makes ``Get Shot``'s
+      the user selected), which is what makes ``Get Segment``'s
       ``frame_count = out - in`` come out right and matches Premiere's own
       model.
     * ``source_fps`` -- the probed rate. ``sequence_fps`` -- DEFAULTED to
@@ -514,14 +514,14 @@ class PremiereFrameSource:
 
 
 class PremiereClipSource:
-    """The clip selected in Premiere, as a one-shot ``CPRB_SHOT_LIST`` (§11).
+    """The clip selected in Premiere, as a one-segment ``CPRB_SEGMENT_LIST`` (§11).
 
     NO export and NO re-encode happens for this: the panel sends the
     selected clip's OWN media file path plus its source in/out, and this
-    node turns that into the pack's already-shipped ``CPRB_SHOT_LIST``
-    (PROTOCOL.md §6.2, exactly one shot) -- so ``Get Shot``,
-    ``Get Shot Frame`` and ``Iterate Shots`` consume a Premiere selection
-    with no new node written for it, and ``Get Shot``'s outputs feed VHS's
+    node turns that into the pack's already-shipped ``CPRB_SEGMENT_LIST``
+    (PROTOCOL.md §6.2, exactly one segment) -- so ``Get Segment``,
+    ``Get Segment Frame`` and ``Iterate Segments`` consume a Premiere selection
+    with no new node written for it, and ``Get Segment``'s outputs feed VHS's
     ``Load Video (Path)`` (``skip_first_frames``/``frame_load_cap``) the
     same way a loaded timeline's shots already do.
 
@@ -549,11 +549,11 @@ class PremiereClipSource:
     """
 
     CATEGORY = CATEGORY_NAME
-    RETURN_TYPES = ("CPRB_SHOT_LIST", "STRING", "FLOAT", "FLOAT", "VIDEO")
+    RETURN_TYPES = ("CPRB_SEGMENT_LIST", "STRING", "FLOAT", "FLOAT", "VIDEO")
     RETURN_NAMES = ("shots", "path", "start_seconds", "end_seconds", "video")
     OUTPUT_TOOLTIPS = (
-        "A one-shot shot list for this clip — wire it into Get Shot, Get Shot Frame, "
-        "or Iterate Shots.",
+        "A one-segment segment list for this clip — wire it into Get Segment, Get Segment Frame, "
+        "or Iterate Segments.",
         "The clip's source media file, as an absolute path.",
         "The clip's in-point in its source media, in seconds.",
         "The clip's out-point in its source media, in seconds.",
@@ -561,8 +561,8 @@ class PremiereClipSource:
     )
     FUNCTION = "execute"
     DESCRIPTION = (
-        "The clip you selected in Premiere's Timeline, as a one-shot shot list (wire it "
-        "into Get Shot / Get Shot Frame / Iterate Shots), its media path and source "
+        "The clip you selected in Premiere's Timeline, as a one-segment segment list (wire it "
+        "into Get Segment / Get Segment Frame / Iterate Segments), its media path and source "
         "in/out in seconds, and a ready-to-wire VIDEO. Nothing is exported or re-encoded "
         "— this just reads the clip's existing media file. The path and in/out fill in by "
         'themselves when you click "Clip → ComfyUI" in the panel, and the workflow runs '
@@ -691,7 +691,7 @@ class PremiereClipSource:
         # numbers that settle it -- compare frame_count against the duration
         # Premiere itself shows for the clip. Without this line the resulting
         # off-by-one frame is invisible: it only surfaces downstream, in
-        # Get Shot's frame_count, with nothing to compare against.
+        # Get Segment's frame_count, with nothing to compare against.
         logger.info(
             "cprb clip_source: %s -> in=%d out=%d frame_count=%d at %.6gfps "
             "(source %.6gs..%.6gs, out point treated as EXCLUSIVE)",
@@ -705,7 +705,7 @@ class PremiereClipSource:
         )
         if resolved.notes:
             # §11: every defaulted/clamped value is stated out loud. This node
-            # has no UI summary output (its shot list IS the payload), so the
+            # has no UI summary output (its segment list IS the payload), so the
             # server log is where they land.
             logger.info("cprb clip_source: %s", "; ".join(resolved.notes))
         return [shot], str(media), resolved.start_seconds, resolved.end_seconds, video

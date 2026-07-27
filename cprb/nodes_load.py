@@ -2,7 +2,7 @@
 ``PremiereShotFrame`` ComfyUI nodes (PROTOCOL.md §6).
 
 No ComfyUI imports anywhere in this module: ``file_path`` is read as a plain
-absolute path (PROTOCOL.md §6.1) and ``CPRB_SHOT_LIST`` (§6.2) is a plain
+absolute path (PROTOCOL.md §6.1) and ``CPRB_SEGMENT_LIST`` (§6.2) is a plain
 ``list[dict]`` value, so nothing here needs ``folder_paths``/``server``/etc.
 Parsing itself lives in :mod:`cprb.timeline_read`; this module is only the
 ComfyUI-shaped wrapper around it (widgets, ``IS_CHANGED``, ``VALIDATE_INPUTS``,
@@ -42,7 +42,7 @@ def set_context(context: BridgeContext | None) -> None:
     Called once from the top-level ``__init__.py`` (real runs); tests may
     call it directly, or skip it entirely -- neither node below actually
     reads *context* today (``file_path`` is a literal absolute path,
-    PROTOCOL.md §6.1, and ``CPRB_SHOT_LIST`` is a pure in-memory value), but
+    PROTOCOL.md §6.1, and ``CPRB_SEGMENT_LIST`` is a pure in-memory value), but
     the top-level loader calls ``set_context`` on every configured feature
     module unconditionally (mirroring ``lora_library.nodes_sets.set_context``
     and ``cpsb.nodes.configure``), so this must exist regardless. Accepts
@@ -65,13 +65,13 @@ def _summary_line(index: int, shot: dict[str, Any]) -> str:
     """One ``summary`` line (PROTOCOL.md §6.1): ``[i] name | path | in-out @fps``.
 
     Appends a visible marker for each of the two conditions §6.1 asks to
-    flag on the shot rather than fail the whole parse over: a disabled clip
+    flag on the segment rather than fail the whole parse over: a disabled clip
     that made it into the list anyway (``skip_disabled=False``), and a
     ``start``/``end`` that :mod:`cprb.timeline_read` could not recover from
     its ``-1`` placeholder (kept as literal ``-1`` there -- never a valid
     frame number, so it doubles as its own flag; see
     ``timeline_read._resolve_track_spans``). Neither marker touches the
-    FROZEN shot dict itself (PROTOCOL.md §6.2) -- both are computed fresh
+    FROZEN segment dict itself (PROTOCOL.md §6.2) -- both are computed fresh
     here from values already in it.
     """
     marker = ""
@@ -85,7 +85,7 @@ def _summary_line(index: int, shot: dict[str, Any]) -> str:
 
 
 class PremiereLoadTimeline:
-    """Reads a Premiere-exported Final Cut Pro XML into a shot list (PROTOCOL.md §6.1).
+    """Reads a Premiere-exported Final Cut Pro XML into a segment list (PROTOCOL.md §6.1).
 
     ``file_path`` is the absolute path of the exported ``.xml`` (Premiere:
     File > Export > Final Cut Pro XML). Parsing itself is
@@ -104,18 +104,21 @@ class PremiereLoadTimeline:
     """
 
     CATEGORY = "Premiere Bridge"
-    RETURN_TYPES = ("CPRB_SHOT_LIST", "INT", "STRING")
+    RETURN_TYPES = ("CPRB_SEGMENT_LIST", "INT", "STRING")
     RETURN_NAMES = ("shots", "count", "summary")
     OUTPUT_TOOLTIPS = (
-        "The parsed shot list — wire it into Get Shot, Iterate Shots, or Get Shot Frame.",
-        "Number of shots in the list (after the skip_disabled filter).",
-        "One line per shot: index, name, source path, in-out frame range, and source fps.",
+        "The parsed segment list — wire it into Get Segment, Iterate Segments, "
+        "or Get Segment Frame.",
+        "Number of segments in the list (after the skip_disabled filter).",
+        "One line per segment: index, name, source path, in-out frame range, "
+        "and source fps.",
     )
     FUNCTION = "execute"
     DESCRIPTION = (
-        "Reads a timeline Premiere exported (File > Export > Final Cut Pro XML) into a shot "
-        "list ComfyUI can work with — wire shots into Get Shot, Iterate Shots, or Get Shot "
-        "Frame. Works from a plain exported file: no plugin required. Disabled clips are left "
+        "Reads a timeline Premiere exported (File > Export > Final Cut Pro XML) into a "
+        "segment list ComfyUI can work with — wire segments into Get Segment, Iterate "
+        "Segments, or Get Segment Frame. Works from a plain exported file: no plugin "
+        "required. Disabled clips are left "
         "out by default; turn skip_disabled off to keep them (marked [DISABLED] in summary)."
     )
 
@@ -138,7 +141,7 @@ class PremiereLoadTimeline:
                     {
                         "default": True,
                         "tooltip": (
-                            "Leave clips Premiere marked disabled out of the shot list "
+                            "Leave clips Premiere marked disabled out of the segment list "
                             "entirely. Off keeps them, marked [DISABLED] in the summary."
                         ),
                     },
@@ -228,11 +231,11 @@ def _in_seconds(shot: dict[str, Any]) -> float:
 def _get_shot_fields(
     shot: dict[str, Any],
 ) -> tuple[str, float, float, int, int, float, str, int, int]:
-    """One shot's ``Get Shot``-shaped 9-tuple (PROTOCOL.md §6.3).
+    """One shot's ``Get Segment``-shaped 9-tuple (PROTOCOL.md §6.3).
 
     ``(path, duration_seconds, in_seconds, frame_count, in_frame, fps, name,
     width, height)`` -- shared VERBATIM by :class:`PremiereGetShot` (one
-    shot) and :class:`PremiereIterateShots` (every shot, column-wise) so the
+    shot) and :class:`PremiereIterateShots` (every segment, column-wise) so the
     two can never drift apart on either the math or the output order.
     """
     fps = float(shot["source_fps"])
@@ -254,7 +257,7 @@ def _get_shot_fields(
 
 
 class PremiereGetShot:
-    """Pulls one shot's path/timing out of a ``CPRB_SHOT_LIST`` by index (PROTOCOL.md §6.3).
+    """Pulls one segment's path/timing out of a ``CPRB_SEGMENT_LIST`` by index (PROTOCOL.md §6.3).
 
     ``in_frame``/``frame_count`` feed VHS's ``Load Video (Path)``
     (``skip_first_frames``/``frame_load_cap``) directly; ``in_seconds``/
@@ -269,8 +272,8 @@ class PremiereGetShot:
     height`` -- the "seconds" pair and the "frame" pair each lead with the
     value that feeds VHS's load-cap widgets, matching how they're wired.
     ⚠ This reorders + extends a previously-shipped node's outputs: a
-    workflow saved before this change re-wires its Get Shot connections BY
-    POSITION on load (§6.3) -- re-check any existing Get Shot wiring once.
+    workflow saved before this change re-wires its Get Segment connections BY
+    POSITION on load (§6.3) -- re-check any existing Get Segment wiring once.
     """
 
     CATEGORY = "Premiere Bridge"
@@ -287,24 +290,24 @@ class PremiereGetShot:
         "height",
     )
     OUTPUT_TOOLTIPS = (
-        "The shot's source media file, as an absolute path.",
-        "The shot's length in seconds, at its own source fps.",
-        "The shot's in-point in seconds, from the start of its source file.",
-        "The shot's length in frames — feeds a loader's frame_load_cap.",
-        "The shot's in-point in frames, from the start of its source file — "
+        "The segment's source media file, as an absolute path.",
+        "The segment's length in seconds, at its own source fps.",
+        "The segment's in-point in seconds, from the start of its source file.",
+        "The segment's length in frames — feeds a loader's frame_load_cap.",
+        "The segment's in-point in frames, from the start of its source file — "
         "feeds a loader's skip_first_frames.",
         "The source file's frame rate.",
-        "The shot's name, from the timeline.",
+        "The segment's name, from the timeline.",
         "The source media's pixel width.",
         "The source media's pixel height.",
     )
     FUNCTION = "execute"
     DESCRIPTION = (
-        "Pulls one shot's path, timing, and resolution out of a shot list — from Load "
+        "Pulls one segment's path, timing, and resolution out of a segment list — from Load "
         "Premiere Timeline or Clip from Premiere, either way — by index. in_frame/"
         "frame_count feed loaders that work in frames, such as Video Helper Suite's Load "
         "Video (Path); in_seconds/duration_seconds suit loaders that work in time; width/"
-        "height suit a resize or Create Video node. index 0 is the first shot in the list."
+        "height suit a resize or Create Video node. index 0 is the first segment in the list."
     )
 
     @classmethod
@@ -312,10 +315,10 @@ class PremiereGetShot:
         return {
             "required": {
                 "shots": (
-                    "CPRB_SHOT_LIST",
+                    "CPRB_SEGMENT_LIST",
                     {
                         "tooltip": (
-                            "The shot list to pull from — from Load Premiere Timeline or "
+                            "The segment list to pull from — from Load Premiere Timeline or "
                             "Clip from Premiere."
                         )
                     },
@@ -326,7 +329,8 @@ class PremiereGetShot:
                         "default": 0,
                         "min": 0,
                         "tooltip": (
-                            "Which shot to pull, counting from 0 for the first shot in the list."
+                            "Which segment to pull, counting from 0 for the first "
+                            "segment in the list."
                         ),
                     },
                 ),
@@ -337,24 +341,24 @@ class PremiereGetShot:
         self, shots: list[dict[str, Any]], index: int
     ) -> tuple[str, float, float, int, int, float, str, int, int]:
         if not shots:
-            raise ValueError("Get Shot: the shot list is empty -- nothing to index into")
+            raise ValueError("Get Segment: the segment list is empty -- nothing to index into")
         if not (0 <= index < len(shots)):
             raise ValueError(
-                f"Get Shot: index {index} out of range -- valid range is 0..{len(shots) - 1}"
+                f"Get Segment: index {index} out of range -- valid range is 0..{len(shots) - 1}"
             )
         return _get_shot_fields(shots[index])
 
 
 class PremiereIterateShots:
-    """Fans a whole ``CPRB_SHOT_LIST`` out through ComfyUI's list execution (PROTOCOL.md §6.4).
+    """Fans a whole ``CPRB_SEGMENT_LIST`` out through ComfyUI's list execution (PROTOCOL.md §6.4).
 
     ComfyUI has no for-loop; list execution is its actual answer to "run
     this subgraph once per item" -- the same mechanism EPSNodes' notebook
     multi-select node relies on. This node's OWN ``execute`` still runs
     exactly ONCE per queue: it returns nine PARALLEL PLAIN LISTS (one
-    element per shot, in shot order) and declares ``OUTPUT_IS_LIST =
+    element per segment, in shot order) and declares ``OUTPUT_IS_LIST =
     (True,) * 9``. ComfyUI's graph executor is what turns that declaration
-    into "one run per shot" for everything wired downstream -- not this
+    into "one run per segment" for everything wired downstream -- not this
     class, which never loops over anything except *shots* itself.
 
     Confirmed against ComfyUI's own ``execution.py`` (checked in this rig at
@@ -391,11 +395,11 @@ class PremiereIterateShots:
     OUTPUT_IS_LIST = (True,) * len(RETURN_TYPES)
     FUNCTION = "execute"
     DESCRIPTION = (
-        "Runs everything downstream once per shot in a shot list — from Load Premiere "
+        "Runs everything downstream once per segment in a segment list — from Load Premiere "
         "Timeline or Clip from Premiere, either way — using ComfyUI's list execution. Wire "
-        "path and the frame/seconds outputs the same way you would for Get Shot, and one "
-        "Run processes every shot in order. Outputs are the same path, timing, and "
-        "resolution fields as Get Shot, just fanned out one shot at a time. An empty shot "
+        "path and the frame/seconds outputs the same way you would for Get Segment, and one "
+        "Run processes every segment in order. Outputs are the same path, timing, and "
+        "resolution fields as Get Segment, just fanned out one segment at a time. An empty shot "
         "list simply runs nothing downstream."
     )
 
@@ -404,10 +408,10 @@ class PremiereIterateShots:
         return {
             "required": {
                 "shots": (
-                    "CPRB_SHOT_LIST",
+                    "CPRB_SEGMENT_LIST",
                     {
                         "tooltip": (
-                            "The shot list to fan out, one run per shot — from Load "
+                            "The segment list to fan out, one run per segment — from Load "
                             "Premiere Timeline or Clip from Premiere."
                         )
                     },
@@ -416,7 +420,7 @@ class PremiereIterateShots:
         }
 
     def execute(self, shots: list[dict[str, Any]]) -> tuple[list[Any], ...]:
-        """Nine parallel lists, one element per shot, in shot order.
+        """Nine parallel lists, one element per segment, in shot order.
 
         Column count comes from ``self.RETURN_TYPES`` (not a hardcoded
         ``9``) so a future §6.3 append-only extension to ``PremiereGetShot``
@@ -436,7 +440,7 @@ class PremiereShotFrame:
     specifically so the decode cost -- and its one real failure mode, media
     that's offline or that ffmpeg can't decode -- never touches their
     cheap, pure-dict-lookup path ("SEPARATE node so the decode cost/failure
-    never touches Get Shot's cheap metadata path", §6.5). The actual decode
+    never touches Get Segment's cheap metadata path", §6.5). The actual decode
     is :func:`cprb.frame_extract.extract_frame`; nothing in THIS module
     imports ``av`` or ``torch`` -- see that module's own lazy-import
     docstring. No decode happens unless this node is actually in the graph.
@@ -448,10 +452,10 @@ class PremiereShotFrame:
     OUTPUT_TOOLTIPS = ("The decoded preview frame at the shot's in-point.",)
     FUNCTION = "execute"
     DESCRIPTION = (
-        "Decodes a single preview frame at one shot's in-point and returns it as an IMAGE — "
-        "from a shot list from Load Premiere Timeline or Clip from Premiere, either way. "
+        "Decodes a single preview frame at one segment's in-point and returns it as an IMAGE — "
+        "from a segment list from Load Premiere Timeline or Clip from Premiere, either way. "
         "Handy for previewing a shot, or feeding a first-frame reference into a generation, "
-        "without loading the whole clip. Takes the same shots list and index as Get Shot. "
+        "without loading the whole clip. Takes the same segments list and index as Get Segment. "
         "Decoding happens only when this node runs, so it costs nothing until you actually "
         "need the preview."
     )
@@ -461,10 +465,10 @@ class PremiereShotFrame:
         return {
             "required": {
                 "shots": (
-                    "CPRB_SHOT_LIST",
+                    "CPRB_SEGMENT_LIST",
                     {
                         "tooltip": (
-                            "The shot list to pull from — from Load Premiere Timeline or "
+                            "The segment list to pull from — from Load Premiere Timeline or "
                             "Clip from Premiere."
                         )
                     },
@@ -475,8 +479,8 @@ class PremiereShotFrame:
                         "default": 0,
                         "min": 0,
                         "tooltip": (
-                            "Which shot's in-point frame to decode, counting from 0 for "
-                            "the first shot in the list."
+                            "Which segment's in-point frame to decode, counting from 0 for "
+                            "the first segment in the list."
                         ),
                     },
                 ),
@@ -485,10 +489,13 @@ class PremiereShotFrame:
 
     def execute(self, shots: list[dict[str, Any]], index: int) -> tuple[Any]:
         if not shots:
-            raise ValueError("Get Shot Frame: the shot list is empty -- nothing to index into")
+            raise ValueError(
+                "Get Segment Frame: the segment list is empty -- nothing to index into"
+            )
         if not (0 <= index < len(shots)):
             raise ValueError(
-                f"Get Shot Frame: index {index} out of range -- valid range is 0..{len(shots) - 1}"
+                f"Get Segment Frame: index {index} out of range -- "
+                f"valid range is 0..{len(shots) - 1}"
             )
 
         shot = shots[index]
