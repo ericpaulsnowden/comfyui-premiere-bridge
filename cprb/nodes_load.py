@@ -107,18 +107,17 @@ class PremiereLoadTimeline:
     RETURN_TYPES = ("CPRB_SEGMENT_LIST", "INT", "STRING")
     RETURN_NAMES = ("shots", "count", "summary")
     OUTPUT_TOOLTIPS = (
-        "The parsed segment list — wire it into Get Segment, Iterate Segments, "
-        "or Get Segment Frame.",
+        "The parsed segment list — wire it into Get Premiere Segment, Iterate Premiere "
+        "Segments, or Get Premiere Segment Frame.",
         "Number of segments in the list (after the skip_disabled filter).",
-        "One line per segment: index, name, source path, in-out frame range, "
-        "and source fps.",
+        "One line per segment: index, name, source path, in-out frame range, and source fps.",
     )
     FUNCTION = "execute"
     DESCRIPTION = (
         "Reads a timeline Premiere exported (File > Export > Final Cut Pro XML) into a "
-        "segment list ComfyUI can work with — wire segments into Get Segment, Iterate "
-        "Segments, or Get Segment Frame. Works from a plain exported file: no plugin "
-        "required. Disabled clips are left "
+        "segment list ComfyUI can work with — wire segments into Get Premiere Segment, "
+        "Iterate Premiere Segments, or Get Premiere Segment Frame. Works from a plain "
+        "exported file: no plugin required. Disabled clips are left "
         "out by default; turn skip_disabled off to keep them (marked [DISABLED] in summary)."
     )
 
@@ -341,10 +340,13 @@ class PremiereGetShot:
         self, shots: list[dict[str, Any]], index: int
     ) -> tuple[str, float, float, int, int, float, str, int, int]:
         if not shots:
-            raise ValueError("Get Segment: the segment list is empty -- nothing to index into")
+            raise ValueError(
+                "Get Premiere Segment: the segment list is empty -- nothing to index into"
+            )
         if not (0 <= index < len(shots)):
             raise ValueError(
-                f"Get Segment: index {index} out of range -- valid range is 0..{len(shots) - 1}"
+                f"Get Premiere Segment: index {index} out of range -- "
+                f"valid range is 0..{len(shots) - 1}"
             )
         return _get_shot_fields(shots[index])
 
@@ -397,10 +399,10 @@ class PremiereIterateShots:
     DESCRIPTION = (
         "Runs everything downstream once per segment in a segment list — from Load Premiere "
         "Timeline or Clip from Premiere, either way — using ComfyUI's list execution. Wire "
-        "path and the frame/seconds outputs the same way you would for Get Segment, and one "
-        "Run processes every segment in order. Outputs are the same path, timing, and "
-        "resolution fields as Get Segment, just fanned out one segment at a time. An empty shot "
-        "list simply runs nothing downstream."
+        "path and the frame/seconds outputs the same way you would for Get Premiere Segment, "
+        "and one Run processes every segment in order. Outputs are the same path, timing, and "
+        "resolution fields as Get Premiere Segment, just fanned out one segment at a time. An "
+        "empty shot list simply runs nothing downstream."
     )
 
     @classmethod
@@ -455,9 +457,9 @@ class PremiereShotFrame:
         "Decodes a single preview frame at one segment's in-point and returns it as an IMAGE — "
         "from a segment list from Load Premiere Timeline or Clip from Premiere, either way. "
         "Handy for previewing a shot, or feeding a first-frame reference into a generation, "
-        "without loading the whole clip. Takes the same segments list and index as Get Segment. "
-        "Decoding happens only when this node runs, so it costs nothing until you actually "
-        "need the preview."
+        "without loading the whole clip. Takes the same segments list and index as Get "
+        "Premiere Segment. Decoding happens only when this node runs, so it costs nothing "
+        "until you actually need the preview."
     )
 
     @classmethod
@@ -490,11 +492,11 @@ class PremiereShotFrame:
     def execute(self, shots: list[dict[str, Any]], index: int) -> tuple[Any]:
         if not shots:
             raise ValueError(
-                "Get Segment Frame: the segment list is empty -- nothing to index into"
+                "Get Premiere Segment Frame: the segment list is empty -- nothing to index into"
             )
         if not (0 <= index < len(shots)):
             raise ValueError(
-                f"Get Segment Frame: index {index} out of range -- "
+                f"Get Premiere Segment Frame: index {index} out of range -- "
                 f"valid range is 0..{len(shots) - 1}"
             )
 

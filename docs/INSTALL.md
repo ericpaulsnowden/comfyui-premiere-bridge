@@ -29,8 +29,8 @@ and a **Premiere Bridge** section in Settings. All eight nodes appear under the
 **Premiere Bridge** category in the node menu.
 
 At this point everything file-based works: **Save Premiere Timeline**, **Load
-Premiere Timeline**, **Get Shot**, **Iterate Shots**, **Get Shot Frame**, and the
-file half of **Send to Premiere**.
+Premiere Timeline**, **Get Premiere Segment**, **Iterate Premiere Segments**,
+**Get Premiere Segment Frame**, and the file half of **Send to Premiere**.
 
 ## 2. The ComfyUI Bridge panel — optional
 

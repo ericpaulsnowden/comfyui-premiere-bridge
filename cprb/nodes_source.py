@@ -552,8 +552,8 @@ class PremiereClipSource:
     RETURN_TYPES = ("CPRB_SEGMENT_LIST", "STRING", "FLOAT", "FLOAT", "VIDEO")
     RETURN_NAMES = ("shots", "path", "start_seconds", "end_seconds", "video")
     OUTPUT_TOOLTIPS = (
-        "A one-segment segment list for this clip — wire it into Get Segment, Get Segment Frame, "
-        "or Iterate Segments.",
+        "A one-segment segment list for this clip — wire it into Get Premiere Segment, Get "
+        "Premiere Segment Frame, or Iterate Premiere Segments.",
         "The clip's source media file, as an absolute path.",
         "The clip's in-point in its source media, in seconds.",
         "The clip's out-point in its source media, in seconds.",
@@ -562,12 +562,12 @@ class PremiereClipSource:
     FUNCTION = "execute"
     DESCRIPTION = (
         "The clip you selected in Premiere's Timeline, as a one-segment segment list (wire it "
-        "into Get Segment / Get Segment Frame / Iterate Segments), its media path and source "
-        "in/out in seconds, and a ready-to-wire VIDEO. Nothing is exported or re-encoded "
-        "— this just reads the clip's existing media file. The path and in/out fill in by "
-        'themselves when you click "Clip → ComfyUI" in the panel, and the workflow runs '
-        "automatically unless you turn that off in Settings → Premiere Bridge; you can "
-        "also type them by hand."
+        "into Get Premiere Segment / Get Premiere Segment Frame / Iterate Premiere Segments), "
+        "its media path and source in/out in seconds, and a ready-to-wire VIDEO. Nothing is "
+        "exported or re-encoded — this just reads the clip's existing media file. The path "
+        'and in/out fill in by themselves when you click "Clip → ComfyUI" in the panel, and '
+        "the workflow runs automatically unless you turn that off in Settings → Premiere "
+        "Bridge; you can also type them by hand."
     )
 
     @classmethod
