@@ -78,9 +78,12 @@ calling the XML output "verified" in the README.
   `exportSequenceFrame`), which every "Frame → ComfyUI" click logs for free,
   before any read that can fail.
   - [x] **S7-b — `exportSequenceFrame`'s own SIGNATURE** — PASSED LIVE 2026-07-26 (the "NEXT for M2"
-    item S7's LIVE RESULTS left open). **RESOLVED FROM DOCUMENTATION, NOT
-    YET FROM A LIVE RUN** — so it stays unchecked, per this file's rule, and
-    the M2 build is what will check it. What the research established
+    item S7's LIVE RESULTS left open). **Originally resolved from documentation
+    only, not yet from a live run** (at write time this bullet said it "stays
+    unchecked, per this file's rule, and the M2 build is what will check it")
+    — **the M2 build (v0.10.0) then did check it live**, and the LIVE RESULTS
+    entry below ("S7-b — FRAME EXPORT PASSED", owner, 2026-07-26) is that
+    confirmation, which is why the box above is now checked. What the research established
     (Adobe's `adobe/premierepro-types` `ExporterStatic` declaration, the
     official 26.3 `Exporter` class page recommitted 2026-06-11 for 26.3, and
     three real shipping callers — Adobe's own `premiere-api` sample panel,
