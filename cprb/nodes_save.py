@@ -287,7 +287,7 @@ class PremiereSaveTimeline:
     exactly the re-import-painless behavior §2 calls for.
     """
 
-    CATEGORY = "Premiere Bridge"
+    CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("timeline_path",)
     OUTPUT_TOOLTIPS = (

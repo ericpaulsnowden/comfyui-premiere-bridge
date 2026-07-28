@@ -27,6 +27,8 @@ It removes the manual export/import step. Three honest levels:
 | [**Iterate Premiere Segments**](#iterate-shots) | *Every* shot at once, so one Run does the whole edit | not needed |
 | [**Get Premiere Segment Frame**](#get-shot-frame) | A preview frame from one segment | not needed |
 | [**Send to Premiere**](#send-to-premiere) | Your result → straight into a Premiere bin | **optional** |
+
+Those three levels map onto the two node-menu buckets like this: *not needed* and *optional* both live under **Handoffs**, because both run to completion without Premiere; *needed in practice* is **Handoffs (requires Premiere)**.
 | [**Frame from Premiere**](#frame-from-premiere) | The still at Premiere's playhead → your graph | **needed in practice** |
 | [**Clip from Premiere**](#clip-from-premiere) | The clip you selected in Premiere → your graph, as a ready-to-wire VIDEO | **needed in practice** |
 
@@ -114,9 +116,21 @@ Every Premiere-facing claim in this README is tracked in
 
 ## The nodes
 
-All eight are under the **Premiere Bridge** category. The **bold name** is what
-you search for in the node menu; the `code name` beside it is the class id you'll
-see in a saved workflow's JSON and in error messages.
+The node menu splits them into **two buckets**, so you can see at a glance what
+works for you:
+
+- **Premiere Bridge › Handoffs** — runs with **no Premiere installed at all**.
+  The five file-based nodes, plus **Send to Premiere** (it always writes the
+  file and reports the path; only its bin/colour/playhead options need the
+  panel).
+- **Premiere Bridge › Handoffs (requires Premiere)** — **Frame from Premiere**
+  and **Clip from Premiere**. These technically accept a hand-typed path, but
+  the panel is the only thing that fills them in, so treat them as panel
+  features.
+
+The **bold name** below is what you search for in the node menu; the
+`code name` beside it is the class id you'll see in a saved workflow's JSON and
+in error messages.
 
 Four of them speak a custom socket type, **`CPRB_SEGMENT_LIST`** — the segment list
 that **Load Premiere Timeline** and **Clip from Premiere** produce, and that

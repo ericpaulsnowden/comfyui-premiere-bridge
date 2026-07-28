@@ -501,8 +501,9 @@ def test_clip_source_is_changed_tracks_the_media_file(tmp_path: Path) -> None:
 
 
 def test_both_nodes_declare_the_contracted_category_and_outputs() -> None:
-    assert PremiereFrameSource.CATEGORY == "Premiere Bridge"
-    assert PremiereClipSource.CATEGORY == "Premiere Bridge"
+    # Bucket 2: the panel is the only producer of these nodes' input.
+    assert PremiereFrameSource.CATEGORY == "Premiere Bridge/Handoffs (requires Premiere)"
+    assert PremiereClipSource.CATEGORY == "Premiere Bridge/Handoffs (requires Premiere)"
 
     assert PremiereFrameSource.RETURN_TYPES == ("IMAGE", "INT", "INT", "STRING")
     assert PremiereFrameSource.RETURN_NAMES == ("image", "width", "height", "path")

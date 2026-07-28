@@ -128,7 +128,9 @@ def _results_dir(context: BridgeContext) -> Path:
 
 
 def test_node_class_contract() -> None:
-    assert PremiereSendResult.CATEGORY == "Premiere Bridge"
+    # Bucket 1: it completes with no Premiere at all (writes/links the file
+    # and reports written_path), so it belongs with the file-based nodes.
+    assert PremiereSendResult.CATEGORY == "Premiere Bridge/Handoffs"
     assert PremiereSendResult.RETURN_TYPES == ("STRING",)
     assert PremiereSendResult.RETURN_NAMES == ("written_path",)
     assert PremiereSendResult.FUNCTION == "execute"

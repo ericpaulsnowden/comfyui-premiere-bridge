@@ -103,7 +103,7 @@ class PremiereLoadTimeline:
     index is assigned after filtering, not before.
     """
 
-    CATEGORY = "Premiere Bridge"
+    CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("CPRB_SEGMENT_LIST", "INT", "STRING")
     RETURN_NAMES = ("shots", "count", "summary")
     OUTPUT_TOOLTIPS = (
@@ -275,7 +275,7 @@ class PremiereGetShot:
     POSITION on load (§6.3) -- re-check any existing Get Segment wiring once.
     """
 
-    CATEGORY = "Premiere Bridge"
+    CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("STRING", "FLOAT", "FLOAT", "INT", "INT", "FLOAT", "STRING", "INT", "INT")
     RETURN_NAMES = (
         "path",
@@ -390,7 +390,7 @@ class PremiereIterateShots:
     applied that filter before *shots* ever reaches this node.
     """
 
-    CATEGORY = "Premiere Bridge"
+    CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = PremiereGetShot.RETURN_TYPES
     RETURN_NAMES = PremiereGetShot.RETURN_NAMES
     OUTPUT_TOOLTIPS = PremiereGetShot.OUTPUT_TOOLTIPS
@@ -448,7 +448,7 @@ class PremiereShotFrame:
     docstring. No decode happens unless this node is actually in the graph.
     """
 
-    CATEGORY = "Premiere Bridge"
+    CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
     OUTPUT_TOOLTIPS = ("The decoded preview frame at the shot's in-point.",)

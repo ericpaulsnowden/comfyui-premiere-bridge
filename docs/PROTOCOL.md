@@ -392,6 +392,34 @@ versions (mismatch = pulled-but-not-restarted; cpsb pattern), plus:
   buttons are frontend affordances over the SAME `file_path` /
   `sequence_name` widgets, so API-driven and remote use are unaffected.
 
+## §8a Node categories (the two buckets)
+
+Every node declares one of exactly two CATEGORY values, mirroring the sibling
+Photoshop pack's `Photoshop Bridge/Handoffs` + `... (requires Photoshop)`
+split:
+
+| CATEGORY | Nodes | Rule |
+|---|---|---|
+| `Premiere Bridge/Handoffs` | Save Premiere Timeline, Load Premiere Timeline, Get Premiere Segment, Iterate Premiere Segments, Get Premiere Segment Frame, **Send to Premiere** | The node RUNS TO COMPLETION with no Premiere installed and no panel connected |
+| `Premiere Bridge/Handoffs (requires Premiere)` | Frame from Premiere, Clip from Premiere | The panel is the ONLY producer of this node's input |
+
+The split criterion is **"does this run without Premiere?"**, not "does the
+name mention Premiere". Hence the one entry that looks surprising:
+
+- **Send to Premiere is bucket 1.** With no panel it still resolves the wired
+  VIDEO/IMAGE to a real durable file, reports `written_path`, and SUCCEEDS —
+  that is §1's ComfyUI-only floor, not a degraded mode. Only its three
+  Premiere-side options (`bin_name`, `color_label`, `insert_at_playhead`) are
+  inert without the panel.
+- **Frame/Clip from Premiere are bucket 2** even though they, too, technically
+  run on a hand-typed path: the panel's `export_ready` relay (§11.3) is the
+  only thing that fills them in normal use, so a user browsing bucket 1 must
+  not find them there and assume they work standalone.
+
+CATEGORY is a node-browser grouping only — it is NOT part of the frozen
+surface in §8, since ComfyUI matches saved workflows on class id, never on
+category. It may be re-organised without breaking a saved graph.
+
 ## §8 Versioning & stability
 
 - `cprb/version.py` (source of truth) + `pyproject.toml` +
@@ -639,7 +667,7 @@ something the ecosystem already does very well.
 
 The two new nodes are `PremiereFrameSource` (display "Frame from Premiere",
 §11.4) and `PremiereClipSource` (display "Clip from Premiere", §11.5), both
-CATEGORY `"Premiere Bridge"` like every other node here. Per §8 both class
+CATEGORY `"Premiere Bridge/Handoffs (requires Premiere)"` (§8a). Per §8 both class
 ids — and the widget ORDER on each — are **FROZEN once shipped**: saved
 workflows reference nodes by id and restore widget values BY POSITION, so
 later widgets are appended at the END only.

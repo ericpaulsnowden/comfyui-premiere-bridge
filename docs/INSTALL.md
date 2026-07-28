@@ -25,8 +25,10 @@ git clone https://github.com/ericpaulsnowden/comfyui-premiere-bridge
 ```
 
 Restart ComfyUI. You should see `cprb vX.Y.Z loaded (8 nodes)` in the server log
-and a **Premiere Bridge** section in Settings. All eight nodes appear under the
-**Premiere Bridge** category in the node menu.
+and a **Premiere Bridge** section in Settings. The nodes appear in the node menu
+under two buckets: **Premiere Bridge > Handoffs** (six nodes that need nothing
+installed in Premiere) and **Premiere Bridge > Handoffs (requires Premiere)**
+(Frame from Premiere and Clip from Premiere, which the panel fills in).
 
 At this point everything file-based works: **Save Premiere Timeline**, **Load
 Premiere Timeline**, **Get Premiere Segment**, **Iterate Premiere Segments**,

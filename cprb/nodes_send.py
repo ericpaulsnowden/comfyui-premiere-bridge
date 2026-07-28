@@ -323,7 +323,14 @@ class PremiereSendResult:
     (naming the input) when ``video`` is not a usable VIDEO object.
     """
 
-    CATEGORY = "Premiere Bridge"
+    # Bucket 1 even though the name says Premiere: this node COMPLETES with no
+    # panel and no Premiere installed -- it resolves the result to a real file
+    # and reports written_path, which is the pack's ComfyUI-only floor (§1).
+    # Only its three Premiere-side options (bin_name, color_label,
+    # insert_at_playhead) are inert without the panel; the handoff itself is
+    # not. Contrast nodes_source, where the panel is the ONLY producer of the
+    # node's input.
+    CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("written_path",)
     OUTPUT_TOOLTIPS = (

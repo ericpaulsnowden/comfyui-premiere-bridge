@@ -48,7 +48,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("cprb")
 
-CATEGORY_NAME = "Premiere Bridge"
+#: Both nodes here are bucket 2: the Premiere panel is the ONLY producer of
+#: their input (§11.3's export_ready relay). They still RUN on a hand-typed
+#: path, but that is a fallback, not the feature.
+CATEGORY_NAME = "Premiere Bridge/Handoffs (requires Premiere)"
 
 #: PROTOCOL.md §6.2's ``start``/``end`` (a shot's position on the TIMELINE)
 #: for a segment that has no timeline position to report.
