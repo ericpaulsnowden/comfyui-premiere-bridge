@@ -252,8 +252,18 @@ function claimNonce(nonce) {
  * @returns {boolean} whether a queue was actually attempted.
  */
 function maybeAutoRun(spec, nonce) {
-  if (!getAutoRun()) return false
-  if (!claimNonce(nonce)) return false
+  // Every skip is SAID (console), because "it didn't run and nothing explains
+  // why" is precisely the owner's 2026-07-29 report — the skip that time was
+  // the missing-file branch upstream, but any silent skip here would read the
+  // same way.
+  if (!getAutoRun()) {
+    warn('auto-run skipped: the cprb.autoRun setting is off')
+    return false
+  }
+  if (!claimNonce(nonce)) {
+    warn('auto-run skipped: another ComfyUI tab claimed this send (nonce already taken)')
+    return false
+  }
   app.queuePrompt(0).catch((error) => {
     warn('auto-run after Premiere send failed', error)
     toast({
@@ -435,14 +445,15 @@ function onExportReady(payload) {
       summary: `${spec.display}: nothing was written`,
       detail:
         `Premiere reported ${spec.hasInOut ? 'a clip' : 'an export'} at:\n${writePath}\n` +
-        'but ComfyUI cannot find that file. ' +
+        'but ComfyUI cannot find that file (the server polled for 3s). ' +
         (spec.hasInOut
           ? 'The clip may be offline in Premiere, or its media may live on a drive ' +
             'this machine cannot see.'
           : "Premiere's frame export can report success without writing anything — " +
             'click "Frame → ComfyUI" again, and check the panel log.') +
-        `\nThe path was still filled into ${nodeCountLabel(updated)}, so a retry ` +
-        'only needs the button.',
+        `\nAuto-run was skipped on purpose — running a graph against a missing ` +
+        `file can only fail. The path was still filled into ` +
+        `${nodeCountLabel(updated)}, so a retry only needs the button.`,
       life: 20000
     })
     return

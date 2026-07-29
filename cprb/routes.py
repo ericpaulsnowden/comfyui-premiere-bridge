@@ -296,8 +296,9 @@ _PUSH_SEND_TIMEOUT_SECONDS = 5.0
 _FRAMES_DIR_TIMEOUT_SECONDS = 5.0
 
 #: How long §11.2's server-side existence check may take before the relay
-#: goes out unverified. Same reasoning as above: one ``stat`` on a live share
-#: is microseconds; on a dead one it must not hold up the message.
+#: goes out unverified. Must exceed `_FRAME_POLL_BUDGET_SECONDS` (the poll
+#: below) with headroom; on a dead share the whole thing is abandoned and
+#: the payload goes out with no verdict rather than holding up the message.
 _EXPORT_STAT_TIMEOUT_SECONDS = 5.0
 
 #: PROTOCOL.md §11: the folder the Premiere plugin writes its frame exports
@@ -468,8 +469,30 @@ def _running_on_push_loop(loop: asyncio.AbstractEventLoop) -> bool:
         return False
 
 
+#: How long :func:`_stat_export_path` keeps polling for a frame that
+#: Premiere claims to have exported, and how often. OBSERVED LIVE
+#: (owner, 2026-07-29): `exportSequenceFrame` returned ``true``, the panel
+#: relayed instantly, the server statted instantly — and the file landed a
+#: beat LATER, so a perfectly good export was announced as "nothing was
+#: written" and (worse) auto-run was suppressed, since a missing file never
+#: auto-runs. §11.7 documents exactly this: "it can return before the write
+#: completes". A single stat therefore races Premiere's own disk flush; a
+#: short poll is the fix. 3 s is far beyond any observed write latency and
+#: still comfortably inside `_EXPORT_STAT_TIMEOUT_SECONDS`'s off-loop bound.
+_FRAME_POLL_BUDGET_SECONDS = 3.0
+_FRAME_POLL_INTERVAL_SECONDS = 0.15
+
+
 def _stat_export_path(kind: Any, raw_path: Any) -> dict[str, Any]:
-    """Blocking half of :func:`_verify_export_path` — one or two ``stat``s."""
+    """Blocking half of :func:`_verify_export_path`.
+
+    A clip is one ``stat`` — its path is Premiere's own already-existing
+    media file, so absence means offline media, not latency. A frame is a
+    POLL (:data:`_FRAME_POLL_BUDGET_SECONDS`): Premiere reports success
+    before the bytes land, so the first look is often one beat too early.
+    Runs on a worker thread (``asyncio.to_thread``), so the sleeps below
+    never touch the event loop.
+    """
     from .nodes_source import resolve_frame_path
 
     text = str(raw_path or "").strip()
@@ -477,12 +500,25 @@ def _stat_export_path(kind: Any, raw_path: Any) -> dict[str, Any]:
         return {"path_exists": False}
     if kind == "frame":
         # Only a frame gets the doubled-extension fallback: that defect is
-        # `exportSequenceFrame`'s alone (§11.7). A clip's path is Premiere's
-        # own media file and must be taken literally.
-        resolved = resolve_frame_path(text)
-        if resolved is None:
-            return {"path_exists": False}
-        return {"path_exists": True, "resolved_path": str(resolved)}
+        # `exportSequenceFrame`'s alone (§11.7).
+        started = time.monotonic()
+        while True:
+            resolved = resolve_frame_path(text)
+            if resolved is not None:
+                waited = time.monotonic() - started
+                if waited > _FRAME_POLL_INTERVAL_SECONDS:
+                    # The race actually happened — say so, because this line
+                    # is the evidence that the poll is earning its keep.
+                    logger.info(
+                        "cprb: frame %s appeared %.2fs after Premiere reported it "
+                        "(the documented late write, §11.7)",
+                        resolved.name,
+                        waited,
+                    )
+                return {"path_exists": True, "resolved_path": str(resolved)}
+            if time.monotonic() - started >= _FRAME_POLL_BUDGET_SECONDS:
+                return {"path_exists": False}
+            time.sleep(_FRAME_POLL_INTERVAL_SECONDS)
     try:
         exists = Path(text).is_file()
     except OSError:

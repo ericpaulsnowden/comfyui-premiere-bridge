@@ -240,7 +240,7 @@ nodes → per-shot processing ("restyle my whole edit").
 
 - Widget: `file_path` (STRING — absolute path of a Premiere-exported
   `.xml`).
-- Outputs: `shots` (custom type `CPRB_SEGMENT_LIST`), `count` (INT),
+- Outputs: `segments` (custom type `CPRB_SEGMENT_LIST`), `count` (INT),
   `summary` (STRING — one line per segment: index, name, source path, in/out
   timecode) — wire `summary` into a Show Text node for a free segment sheet.
 - Parses EVERY `clipitem` on every video track of the first `<sequence>`,
@@ -257,7 +257,7 @@ nodes → per-shot processing ("restyle my whole edit").
   adding keys).
 - Disabled clipitems are kept (flagged `enabled: false`) — the summary
   marks them; a `skip_disabled` BOOLEAN widget (default True) excludes them
-  from `shots`/`count`.
+  from `segments`/`count`.
 - Tolerant parser: missing optional metadata never fails; a file with zero
   video clipitems errors loudly (wrong file, not an empty result).
 - `IS_CHANGED` → file mtime/size so a re-export re-runs.
@@ -269,7 +269,7 @@ wire into cprb consumers; contents are documented here and FROZEN.
 
 ### §6.3 `PremiereGetShot` (display: "Get Premiere Segment")
 
-- Inputs: `shots` (CPRB_SEGMENT_LIST); widget `index` (INT, 0-based, default
+- Inputs: `segments` (CPRB_SEGMENT_LIST); widget `index` (INT, 0-based, default
   0; out of range ⇒ clear error naming the valid range).
 - Outputs, in this order (owner reorder 2026-07-19 — the "seconds" pair and
   the "frame" pair each swapped so the load-cap value leads its partner,
@@ -293,7 +293,7 @@ The answer to "how do I process every segment" (owner ask 2026-07-19) — ComfyU
 has no for-loop, so this fans out via list execution, exactly like EPSNodes'
 multi-select notebook.
 
-- Input: `shots` (CPRB_SEGMENT_LIST); widget `skip_disabled` is unnecessary
+- Input: `segments` (CPRB_SEGMENT_LIST); widget `skip_disabled` is unnecessary
   (Load already filtered) — none.
 - Outputs mirror Get Premiere Segment's set (`path, duration_seconds, in_seconds,
   frame_count, in_frame, fps, name, width, height`) but ALL declared
@@ -309,7 +309,7 @@ Optional preview thumbnail (owner ask 2026-07-19 "can we pull a preview
 frame… if easy/reliable"). SEPARATE node so the decode cost/failure never
 touches Get Premiere Segment's cheap metadata path.
 
-- Inputs: `shots` (CPRB_SEGMENT_LIST); widget `index` (INT, like Get Premiere Segment).
+- Inputs: `segments` (CPRB_SEGMENT_LIST); widget `index` (INT, like Get Premiere Segment).
 - Output: `image` (IMAGE) — one frame decoded via PyAV at the shot's
   `in` point (seek to `in_seconds`, decode the nearest frame, return HWC
   RGB float [0,1], batch 1). Best-effort: media offline/undecodable ⇒ a
@@ -426,27 +426,36 @@ category. It may be re-organised without breaking a saved graph.
   `web/cprb/version.js`, lockstepped by `scripts/bump_version.py`; every
   push bumps ≥ patch and is tagged `vX.Y.Z`; docs-only changes don't bump.
 - FROZEN once shipped: node class ids, route paths, §4/§5 file semantics,
-  §6.2 segment-dict keys, **and every INPUT socket name**. New fields may be
-  added; existing ones never change meaning.
-- **Input socket names are frozen for a measured reason.** ComfyUI reconciles a
+  §6.2 segment-dict keys, **and every INPUT socket name — unless a load-time
+  migration ships in the same release** (below). New fields may be added;
+  existing ones never change meaning.
+- **Why socket names are load-bearing (measured).** ComfyUI reconciles a
   saved workflow's links against the live node definition BY INPUT NAME.
   Measured on the rig 2026-07-27: with the name changed and everything else
   identical, a saved link loads as `link: null` **and `has_errors: false`** —
   the wire is silently gone with no warning anywhere. The socket TYPE is *not*
   part of that match (a type-only mismatch keeps the link), which is why
-  `CPRB_SHOT_LIST` → `CPRB_SEGMENT_LIST` was safe in v0.12.0 and renaming
-  `shots` was not.
-- **User-facing vocabulary vs. internal names (v0.12.0).** Users read
-  **segment** everywhere: node menu names (*Get Premiere Segment*,
-  *Iterate Premiere Segments*, *Get Premiere Segment Frame*), the
-  `CPRB_SEGMENT_LIST` type, every tooltip,
-  description and message, and all docs. INTERNALLY the pack still says
-  `shot` — the socket `name` (`shots`), the Python identifiers, the §6.2 dict
-  keys, and the frozen class ids (`PremiereGetShot`, `PremiereIterateShots`,
-  `PremiereShotFrame`). That split is deliberate, not drift: the internal
-  names are frozen compatibility surface, and the socket LABEL carries the
-  user-facing word instead (`web/cprb/nodes.js`
-  `relabelSegmentSockets`).
+  `CPRB_SHOT_LIST` → `CPRB_SEGMENT_LIST` was safe in v0.12.0 on its own.
+- **The `shots` → `segments` rename shipped in two steps.** v0.12.0 kept the
+  socket NAME as `shots` and showed a `segments` LABEL on live nodes — which
+  the owner then correctly rejected (2026-07-29): the node-library hover
+  preview renders from the DEFINITION's socket names, which no per-instance
+  label can reach, so it still said `shots`. v0.13.0 therefore renames the
+  REAL socket names (`shots` → `segments` on all five segment-speaking
+  classes, inputs and outputs, including the Python kwargs) and ships the
+  required migration: `web/cprb/nodes.js migrateSegmentSocketNames`, called
+  from the extension's `beforeConfigureGraph` hook, rewrites a pre-v0.13.0
+  save's socket names in memory BEFORE reconciliation ever sees them, so old
+  workflows load with their wires intact. Verified against a pre-rename
+  fixture on the rig.
+- **Known migration limit:** an API-FORMAT export ("Export (API)") is keyed by
+  the Python input names and never passes through the frontend hook — one
+  saved before v0.13.0 fails validation ("required input missing: segments")
+  and must be re-exported from the reopened workflow. Accepted: the UI format
+  is what the owner and the bundled example use.
+- The remaining internal `shot` vocabulary is the truly frozen surface: the
+  class ids (`PremiereGetShot`, `PremiereIterateShots`, `PremiereShotFrame`)
+  and §6.2's dict keys. Everything a user can read says **segment**.
 
 ## §9 Spikes (details in docs/SPIKES.md)
 
@@ -875,7 +884,7 @@ Policy — decided, and not for implementation to reopen:
   Both FLOATs are declared `round: False` — a frame is ~0.0417 s at 23.976,
   so the frontend's usual 3-decimal rounding could shift an in point across a
   frame boundary.
-- Outputs, in this order: `shots` (`CPRB_SEGMENT_LIST`), `path` (STRING),
+- Outputs, in this order: `segments` (`CPRB_SEGMENT_LIST`), `path` (STRING),
   `start_seconds` (FLOAT), `end_seconds` (FLOAT), `video` (VIDEO — appended
   in v0.11.0; §8's append-only rule is why it is LAST). `path`/
   `start_seconds`/`end_seconds` report the **EFFECTIVE** values actually
@@ -895,7 +904,7 @@ Policy — decided, and not for implementation to reopen:
   reached through the `_video_from_file_class` seam — the pack's ONLY
   ComfyUI-internal class dependency; everything else duck-types — so tests
   stub it and a pre-VIDEO ComfyUI gets a clear "update ComfyUI" error.
-- `shots` is the reuse that matters: **one** shot in §6.2's frozen dict
+- `segments` is the reuse that matters: **one** segment in §6.2's frozen dict
   shape, so a clip lifted off the Premiere timeline wires straight into the
   already-shipped `Get Premiere Segment`, `Get Premiere Segment Frame` and
   `Iterate Premiere Segments` nodes with no new consumer code (and through

@@ -12,7 +12,7 @@
 import { app } from '../../scripts/app.js'
 import { FRONTEND_VERSION, warn } from './cprb/api.js'
 import { SETTINGS, initSettings } from './cprb/settings.js'
-import { attachNodeUi, relabelSegmentSockets } from './cprb/nodes.js'
+import { attachNodeUi, migrateSegmentSocketNames } from './cprb/nodes.js'
 import { initSendResultToasts } from './cprb/send_result.js'
 import { initPremiereSourceRelay } from './cprb/premiere_source.js'
 
@@ -60,20 +60,24 @@ app.registerExtension({
    * PremiereSaveTimeline (PROTOCOL.md §7.3) — wrapped here too, belt and
    * suspenders, matching this file's `setup()` above.
    */
+  /**
+   * Fires with the raw workflow JSON before configure(): pre-v0.13.0 saves
+   * carry socket name `shots`, which would silently drop the wire against
+   * the renamed definition — the migration rewrites them first.
+   */
+  beforeConfigureGraph(graphData) {
+    try {
+      migrateSegmentSocketNames(graphData)
+    } catch (error) {
+      warn('migrateSegmentSocketNames failed', error)
+    }
+  },
+
   nodeCreated(node) {
     try {
       attachNodeUi(node)
     } catch (error) {
       warn('attachNodeUi failed', error)
-    }
-    // The segment-list socket reads "segments" while its NAME stays `shots`
-    // (renaming the name would silently drop the wire in every saved
-    // workflow — see relabelSegmentSockets). Wrapped separately so a failure
-    // here cannot cost the file bar above.
-    try {
-      relabelSegmentSockets(node)
-    } catch (error) {
-      warn('relabelSegmentSockets failed', error)
     }
   }
 })

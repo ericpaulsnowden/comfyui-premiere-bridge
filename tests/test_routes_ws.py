@@ -247,7 +247,7 @@ async def test_export_ready_relays_payload_minus_type_via_send_event(
 
 
 async def test_export_ready_reports_a_frame_that_was_never_written(
-    client, context: BridgeContext, tmp_path: Path
+    client, context: BridgeContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The failure the panel CANNOT detect on its own (§11.7).
 
@@ -256,8 +256,11 @@ async def test_export_ready_reports_a_frame_that_was_never_written(
     an arbitrary path to check. This hop is the only one that both sees the
     message and can look at the disk, so a missing file must be named here —
     otherwise the frontend toasts "press Run when ready" for a file that does
-    not exist.
+    not exist. The frame poll (which exists for the LATE write, the other half
+    of the same documented behaviour) is shrunk so "provably absent" does not
+    cost this test 3 real seconds.
     """
+    monkeypatch.setattr(cprb_routes, "_FRAME_POLL_BUDGET_SECONDS", 0.2)
     events: list[tuple[str, dict]] = []
     context.send_event = lambda event, payload: events.append((event, payload))
     missing = tmp_path / "never_written.png"

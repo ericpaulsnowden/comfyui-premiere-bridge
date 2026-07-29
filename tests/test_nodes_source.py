@@ -515,7 +515,7 @@ def test_both_nodes_declare_the_contracted_category_and_outputs() -> None:
         "VIDEO",
     )
     assert PremiereClipSource.RETURN_NAMES == (
-        "shots",
+        "segments",
         "path",
         "start_seconds",
         "end_seconds",

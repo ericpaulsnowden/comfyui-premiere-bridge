@@ -553,7 +553,9 @@ class PremiereClipSource:
 
     CATEGORY = CATEGORY_NAME
     RETURN_TYPES = ("CPRB_SEGMENT_LIST", "STRING", "FLOAT", "FLOAT", "VIDEO")
-    RETURN_NAMES = ("shots", "path", "start_seconds", "end_seconds", "video")
+    # "segments" since v0.13.0 (see nodes_load.PremiereLoadTimeline.RETURN_NAMES
+    # for the rename + migration story).
+    RETURN_NAMES = ("segments", "path", "start_seconds", "end_seconds", "video")
     OUTPUT_TOOLTIPS = (
         "A one-segment segment list for this clip — wire it into Get Premiere Segment, Get "
         "Premiere Segment Frame, or Iterate Premiere Segments.",

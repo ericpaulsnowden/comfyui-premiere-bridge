@@ -95,17 +95,22 @@ class PremiereLoadTimeline:
     re-export (same filename, new content) actually re-runs.
 
     ``skip_disabled`` (default ``True``) drops clips Premiere marked
-    disabled from BOTH ``shots`` and ``count``; when ``False`` they're kept,
+    disabled from BOTH ``segments`` and ``count``; when ``False`` they're kept,
     with a ``[DISABLED]`` marker on their ``summary`` line
     (:func:`_summary_line`). Either way, every ``summary`` line's leading
     ``[i]`` matches exactly the ``index`` :class:`PremiereGetShot` needs to
-    pull that same shot back out of THIS node's ``shots`` output -- the
+    pull that same segment back out of THIS node's ``segments`` output -- the
     index is assigned after filtering, not before.
     """
 
     CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("CPRB_SEGMENT_LIST", "INT", "STRING")
-    RETURN_NAMES = ("shots", "count", "summary")
+    # "segments", not "shots", since v0.13.0 — the completion of the owner's
+    # v0.12.0 vocabulary rename. Socket names ARE reconciliation keys for
+    # saved workflows (§8), so this rename ships with a frontend load-time
+    # migration (web/cprb/nodes.js migrateSegmentSocketNames) that rewrites
+    # old saves' socket names before ComfyUI reconciles them.
+    RETURN_NAMES = ("segments", "count", "summary")
     OUTPUT_TOOLTIPS = (
         "The parsed segment list — wire it into Get Premiere Segment, Iterate Premiere "
         "Segments, or Get Premiere Segment Frame.",
@@ -313,7 +318,7 @@ class PremiereGetShot:
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {
-                "shots": (
+                "segments": (
                     "CPRB_SEGMENT_LIST",
                     {
                         "tooltip": (
@@ -337,18 +342,18 @@ class PremiereGetShot:
         }
 
     def execute(
-        self, shots: list[dict[str, Any]], index: int
+        self, segments: list[dict[str, Any]], index: int
     ) -> tuple[str, float, float, int, int, float, str, int, int]:
-        if not shots:
+        if not segments:
             raise ValueError(
                 "Get Premiere Segment: the segment list is empty -- nothing to index into"
             )
-        if not (0 <= index < len(shots)):
+        if not (0 <= index < len(segments)):
             raise ValueError(
                 f"Get Premiere Segment: index {index} out of range -- "
-                f"valid range is 0..{len(shots) - 1}"
+                f"valid range is 0..{len(segments) - 1}"
             )
-        return _get_shot_fields(shots[index])
+        return _get_shot_fields(segments[index])
 
 
 class PremiereIterateShots:
@@ -361,7 +366,7 @@ class PremiereIterateShots:
     element per segment, in shot order) and declares ``OUTPUT_IS_LIST =
     (True,) * 9``. ComfyUI's graph executor is what turns that declaration
     into "one run per segment" for everything wired downstream -- not this
-    class, which never loops over anything except *shots* itself.
+    class, which never loops over anything except *segments* itself.
 
     Confirmed against ComfyUI's own ``execution.py`` (checked in this rig at
     ``~/Library/Application Support/comfy_ps/rig/ComfyUI/execution.py``):
@@ -384,10 +389,10 @@ class PremiereIterateShots:
     duration_seconds, in_seconds, frame_count, in_frame, fps, name, width,
     height``); wire ``path`` + the frame outputs into VHS ``Load Video
     (Path)`` and one Run processes the whole edit shot by shot. An empty
-    ``shots`` list is not an error: every output is simply an empty list, so
+    ``segments`` list is not an error: every output is simply an empty list, so
     nothing downstream runs (PROTOCOL.md §6.4). ``skip_disabled`` is
     deliberately NOT a widget here -- ``PremiereLoadTimeline`` already
-    applied that filter before *shots* ever reaches this node.
+    applied that filter before *segments* ever reaches this node.
     """
 
     CATEGORY = "Premiere Bridge/Handoffs"
@@ -409,7 +414,7 @@ class PremiereIterateShots:
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {
-                "shots": (
+                "segments": (
                     "CPRB_SEGMENT_LIST",
                     {
                         "tooltip": (
@@ -421,7 +426,7 @@ class PremiereIterateShots:
             }
         }
 
-    def execute(self, shots: list[dict[str, Any]]) -> tuple[list[Any], ...]:
+    def execute(self, segments: list[dict[str, Any]]) -> tuple[list[Any], ...]:
         """Nine parallel lists, one element per segment, in shot order.
 
         Column count comes from ``self.RETURN_TYPES`` (not a hardcoded
@@ -429,7 +434,7 @@ class PremiereIterateShots:
         can never silently desync the two nodes' arity.
         """
         columns: tuple[list[Any], ...] = tuple([] for _ in self.RETURN_TYPES)
-        for shot in shots:
+        for shot in segments:
             for column, value in zip(columns, _get_shot_fields(shot), strict=True):
                 column.append(value)
         return columns
@@ -466,7 +471,7 @@ class PremiereShotFrame:
     def INPUT_TYPES(cls) -> dict[str, Any]:
         return {
             "required": {
-                "shots": (
+                "segments": (
                     "CPRB_SEGMENT_LIST",
                     {
                         "tooltip": (
@@ -489,17 +494,17 @@ class PremiereShotFrame:
             }
         }
 
-    def execute(self, shots: list[dict[str, Any]], index: int) -> tuple[Any]:
-        if not shots:
+    def execute(self, segments: list[dict[str, Any]], index: int) -> tuple[Any]:
+        if not segments:
             raise ValueError(
                 "Get Premiere Segment Frame: the segment list is empty -- nothing to index into"
             )
-        if not (0 <= index < len(shots)):
+        if not (0 <= index < len(segments)):
             raise ValueError(
                 f"Get Premiere Segment Frame: index {index} out of range -- "
-                f"valid range is 0..{len(shots) - 1}"
+                f"valid range is 0..{len(segments) - 1}"
             )
 
-        shot = shots[index]
+        shot = segments[index]
         image = extract_frame(shot["path"], _in_seconds(shot))
         return (image,)

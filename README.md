@@ -21,16 +21,18 @@ It removes the manual export/import step. Three honest levels:
 
 | Node | What it does | Panel |
 |---|---|---|
-| [**Save Premiere Timeline**](#save-premiere-timeline) | Your shots → a Premiere-importable sequence | not needed |
+| [**Save Premiere Timeline**](#save-premiere-timeline) | Your segments → a Premiere-importable sequence | not needed |
 | [**Load Premiere Timeline**](#load-premiere-timeline) | Your Premiere edit → a segment list | not needed |
-| [**Get Premiere Segment**](#get-shot) | One shot from the list, as paths + frames + seconds | not needed |
-| [**Iterate Premiere Segments**](#iterate-shots) | *Every* shot at once, so one Run does the whole edit | not needed |
-| [**Get Premiere Segment Frame**](#get-shot-frame) | A preview frame from one segment | not needed |
+| [**Get Premiere Segment**](#get-premiere-segment) | One segment from the list, as paths + frames + seconds | not needed |
+| [**Iterate Premiere Segments**](#iterate-premiere-segments) | *Every* segment at once, so one Run does the whole edit | not needed |
+| [**Get Premiere Segment Frame**](#get-premiere-segment-frame) | A preview frame from one segment | not needed |
 | [**Send to Premiere**](#send-to-premiere) | Your result → straight into a Premiere bin | **optional** |
-
-Those three levels map onto the two node-menu buckets like this: *not needed* and *optional* both live under **Handoffs**, because both run to completion without Premiere; *needed in practice* is **Handoffs (requires Premiere)**.
 | [**Frame from Premiere**](#frame-from-premiere) | The still at Premiere's playhead → your graph | **needed in practice** |
 | [**Clip from Premiere**](#clip-from-premiere) | The clip you selected in Premiere → your graph, as a ready-to-wire VIDEO | **needed in practice** |
+
+Those three levels map onto the two node-menu buckets: *not needed* and
+*optional* both live under **Handoffs**, because both run to completion without
+Premiere; *needed in practice* is **Handoffs (requires Premiere)**.
 
 **What the three levels mean:**
 
@@ -236,7 +238,7 @@ cut through any video workflow you already have.
 | `file_path` | STRING | empty | The `.xml` Premiere exported. |
 | `skip_disabled` | BOOLEAN | **on** | Leave out clips you disabled in Premiere. |
 
-**Outputs.** `shots` (`CPRB_SEGMENT_LIST`) — the edit in timeline order across all
+**Outputs.** `segments` (`CPRB_SEGMENT_LIST`) — the edit in timeline order across all
 video tracks · `count` (INT) · `summary` (STRING) — one readable line per segment,
 so wiring it into any text-preview node gives you a free segment sheet.
 
@@ -248,7 +250,7 @@ than the one it runs on.
 **What it copes with.** Real Premiere export noise: `pproTicks*` attributes,
 labels and filters, audio tracks, disabled clips, file-by-id references,
 generator clips with no media, and the `-1` boundaries Premiere writes around
-transitions. A compound/nested clip is returned as **one** shot — the clipitems
+transitions. A compound/nested clip is returned as **one** segment — the clipitems
 *inside* it are not walked, so a nested sequence never leaks its contents into
 your segment list as extra cuts.
 
@@ -261,7 +263,7 @@ your segment list as extra cuts.
 - Re-exporting over the **same filename** really does re-run the node (it tracks
   the file's timestamp and size), so you don't have to rename anything to pick up
   an updated edit.
-- A few shots can legitimately come back with an empty `path` — a compound clip,
+- A few segments can legitimately come back with an empty `path` — a compound clip,
   or a generator with no media on disk. Likewise `width`/`height` of `0` means
   "the export didn't say", not "zero pixels".
 - An XML with no video clips at all is a hard error naming the likely cause,
@@ -275,7 +277,7 @@ Pulls **one segment out of a segment list** by number, in every form a video loa
 might want. This is the node that connects a Premiere edit to the rest of the
 ecosystem.
 
-**Inputs.** `shots` (`CPRB_SEGMENT_LIST` socket) · `index` (INT, default `0`,
+**Inputs.** `segments` (`CPRB_SEGMENT_LIST` socket) · `index` (INT, default `0`,
 0-based).
 
 **Outputs**, in socket order: `path` (STRING) · `duration_seconds` (FLOAT) ·
@@ -291,7 +293,7 @@ there's no off-by-one to correct.
 realistic mistake — you get an error naming the valid range, but only once the
 run reaches this node, not when you press Run. An **empty** segment list is a hard
 error here (use [**Iterate Premiere Segments**](#iterate-shots) if you want an empty edit to
-simply do nothing downstream). All values are computed at the shot's *own* frame
+simply do nothing downstream). All values are computed at the segment's *own* frame
 rate, never the sequence rate, so for a clip Premiere conformed to a different
 rate prefer `in_seconds` / `duration_seconds` over the frame numbers.
 
@@ -299,12 +301,12 @@ rate prefer `in_seconds` / `duration_seconds` over the frame numbers.
 
 > **Plugin: not needed.** · `PremiereIterateShots`
 
-**Every shot at once, as lists** — so ComfyUI fans the rest of your graph out
+**Every segment at once, as lists** — so ComfyUI fans the rest of your graph out
 over every cut and one Run processes the whole edit. This is the node that
 actually delivers "restyle my whole edit"; **Get Premiere Segment** handles one cut, this one
-handles all of them. No index, no loop node, no widgets — just wire `shots` in.
+handles all of them. No index, no loop node, no widgets — just wire `segments` in.
 
-**Input.** `shots` (`CPRB_SEGMENT_LIST` socket).
+**Input.** `segments` (`CPRB_SEGMENT_LIST` socket).
 
 **Outputs**, in socket order — the same nine as Get Premiere Segment, each one a *list* with
 an entry per segment: `path` · `duration_seconds` · `in_seconds` · `frame_count` ·
@@ -324,7 +326,7 @@ Decodes **one frame** from a segment as an IMAGE — a thumbnail at that segment
 point. Good for eyeballing what you're about to process, or for feeding a single
 frame from your edit into an image workflow.
 
-**Inputs.** `shots` (`CPRB_SEGMENT_LIST` socket) · `index` (INT, default `0`).
+**Inputs.** `segments` (`CPRB_SEGMENT_LIST` socket) · `index` (INT, default `0`).
 
 **Output.** `image` (IMAGE). This node shows nothing by itself — wire `image`
 into a **Preview Image** (or anything else) or you'll see no frame.
@@ -337,8 +339,8 @@ into a **Preview Image** (or anything else) or you'll see no frame.
 - An in point past the end of the media gives you the last decodable frame rather
   than an error.
 - Its `index` is completely independent of any **Get Premiere Segment** node's `index`, so
-  it's easy to preview shot 2 while processing shot 5.
-- It takes a `shots` list, which **Iterate Premiere Segments** does not output — so it can't
+  it's easy to preview segment 2 while processing segment 5.
+- It takes a `segments` list, which **Iterate Premiere Segments** does not output — so it can't
   be fanned out that way. Drive it with an `index` instead.
 
 ### Send to Premiere
@@ -477,7 +479,7 @@ All three are ordinary visible fields the panel writes.
 Like Frame → ComfyUI above, the panel button **also runs the workflow** unless
 you turn off **Settings → Premiere Bridge → Auto-run**.
 
-**Outputs.** `shots` (`CPRB_SEGMENT_LIST`) · `path` (STRING) · `start_seconds`
+**Outputs.** `segments` (`CPRB_SEGMENT_LIST`) · `path` (STRING) · `start_seconds`
 (FLOAT) · `end_seconds` (FLOAT) · `video` (VIDEO) — the three middle ones report
 the values actually used after any clamping.
 
@@ -489,7 +491,7 @@ node (the Gemini/Veo-style API nodes). No load node, no path juggling — select
 the clip in Premiere, click the button, and the video is already a socket in
 your graph.
 
-`shots` is for the shot-list world: a **one-segment list in exactly the same shape
+`segments` is for the segment-list world: a **one-segment list in exactly the same shape
 Load Premiere Timeline produces**, so a clip lifted off your timeline plugs
 straight into **Get Premiere Segment**, **Iterate Premiere Segments** and **Get Premiere Segment Frame** — and
 through Get Premiere Segment into VideoHelperSuite-style loaders. The plain `path` /
@@ -513,7 +515,7 @@ works, but you're reading those numbers off Premiere by hand.
   file, so they're refused **by name** instead of sending an empty path. With
   nothing selected the panel tells you what it looked at and what to select — it
   never guesses at the clip under the playhead.
-- The shot's `name` is the **media file's stem**, not Premiere's clip name, so a
+- The segment's `name` is the **media file's stem**, not Premiere's clip name, so a
   clip you renamed on the timeline shows up downstream under its file name.
 - The out point is treated as **exclusive**, which is what makes `frame_count`
   come out right downstream. Every run logs `in`/`out`/`frame_count`/fps to

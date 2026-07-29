@@ -1334,77 +1334,85 @@ async function onOpenFolderClickSave(state) {
 }
 
 // ---------------------------------------------------------------------------
-// Segment socket labels (user-facing vocabulary, v0.12.0)
+// Segment socket-name migration (v0.13.0)
 // ---------------------------------------------------------------------------
 
-/**
- * The socket whose *name* is `shots` on every node that speaks the segment
- * list. Its NAME is frozen; only its LABEL changes. See
- * {@link relabelSegmentSockets}.
- */
-const SEGMENT_SOCKET_NAME = 'shots'
-const SEGMENT_SOCKET_LABEL = 'segments'
-
-/** Classes carrying a `shots` OUTPUT, and those carrying it as an INPUT. */
-const SEGMENT_OUTPUT_CLASSES = new Set(['PremiereLoadTimeline', 'PremiereClipSource'])
-const SEGMENT_INPUT_CLASSES = new Set([
+/** Classes whose `shots` socket became `segments` in v0.13.0. */
+const SEGMENT_CLASSES = new Set([
+  'PremiereLoadTimeline',
+  'PremiereClipSource',
   'PremiereGetShot',
   'PremiereIterateShots',
   'PremiereShotFrame'
 ])
 
 /**
- * Shows the segment list socket as **segments** while its underlying `name`
- * stays `shots`.
+ * Rewrites a pre-v0.13.0 saved workflow IN MEMORY, before ComfyUI reconciles
+ * it: every `shots` input/output on this pack's five segment-speaking classes
+ * becomes `segments`, and the old `CPRB_SHOT_LIST` type string becomes
+ * `CPRB_SEGMENT_LIST`.
  *
- * WHY IT IS DONE THIS WAY, and why the name must never be renamed instead:
- * ComfyUI reconciles a saved workflow's links against the live node
- * definition BY INPUT NAME. Renaming the input from `shots` to `segments`
- * makes every existing saved workflow load with that wire SILENTLY GONE —
- * measured on the rig 2026-07-27: `link: null` with `has_errors: false`, so
- * nothing warns the user at all. The socket TYPE, by contrast, is not part of
- * that match (a type-only mismatch keeps the link), which is why
- * `CPRB_SEGMENT_LIST` could be renamed safely and `shots` could not.
+ * WHY THIS EXISTS — the two-step history matters here:
+ * v0.12.0 measured that ComfyUI reconciles saved links BY INPUT NAME and
+ * silently drops the wire on a mismatch (`link: null`, `has_errors: false`),
+ * so it left the socket NAME as `shots` and showed a `segments` LABEL. The
+ * owner then reported (2026-07-29) that the node-library hover preview still
+ * showed `shots` — that preview renders from the node DEFINITION's socket
+ * names, which no per-instance label can reach. So v0.13.0 renames the real
+ * socket names in Python and this migration is what keeps every pre-rename
+ * save loading with its wires intact: by the time reconciliation runs, the
+ * saved names already match the new definition.
  *
- * `label` is litegraph's own display field and is what the canvas renders
- * (verified live: `label` set, `name` unchanged, and `serialize()` still
- * writes `name: "shots"`). So the user reads "segments" everywhere while
- * every workflow Eric has already saved keeps working.
+ * Runs from the extension's `beforeConfigureGraph` hook, which hands over the
+ * raw workflow JSON before `configure()`. The walk is recursive over any
+ * object carrying a `nodes` array so grouped/nested graphs are covered too.
+ * Idempotent (a v0.13.0+ save contains nothing to rewrite) and non-throwing —
+ * a migration that breaks loading would be worse than stale names.
  *
- * Applied on creation AND after configure(), because a workflow load restores
- * the saved inputs/outputs arrays and would otherwise drop the label.
- * @param {object} node - LiteGraph node instance.
+ * KNOWN LIMIT: old API-FORMAT exports (Export (API)) are keyed by the PYTHON
+ * input names and never pass through this frontend hook; one saved before
+ * v0.13.0 must be re-exported. Recorded in PROTOCOL.md §8.
+ * @param {object} graphData - the parsed workflow JSON, mutated in place.
  */
-export function relabelSegmentSockets(node) {
+export function migrateSegmentSocketNames(graphData) {
   try {
-    if (!node) return
-    const cls = nodeClassOf(node) || node.type
-    const relabel = (sockets) => {
-      for (const socket of sockets || []) {
-        if (socket && socket.name === SEGMENT_SOCKET_NAME) {
-          socket.label = SEGMENT_SOCKET_LABEL
+    const visit = (container) => {
+      const nodes = container?.nodes
+      if (!Array.isArray(nodes)) return
+      for (const node of nodes) {
+        if (node && SEGMENT_CLASSES.has(node.type)) {
+          for (const socket of [...(node.inputs || []), ...(node.outputs || [])]) {
+            if (socket && socket.name === 'shots') socket.name = 'segments'
+            if (socket && socket.type === 'CPRB_SHOT_LIST') socket.type = 'CPRB_SEGMENT_LIST'
+          }
+        }
+        // Group nodes / subgraphs can nest whole graphs.
+        if (node && typeof node === 'object') {
+          for (const value of Object.values(node)) {
+            if (value && typeof value === 'object' && Array.isArray(value.nodes)) visit(value)
+          }
+        }
+      }
+      if (Array.isArray(container.links)) {
+        for (const link of container.links) {
+          // Array form: [id, srcId, srcSlot, dstId, dstSlot, type]
+          if (Array.isArray(link) && link[5] === 'CPRB_SHOT_LIST') link[5] = 'CPRB_SEGMENT_LIST'
+          // Object form (newer serializations).
+          if (link && !Array.isArray(link) && link.type === 'CPRB_SHOT_LIST') {
+            link.type = 'CPRB_SEGMENT_LIST'
+          }
         }
       }
     }
-    if (SEGMENT_OUTPUT_CLASSES.has(cls)) relabel(node.outputs)
-    if (SEGMENT_INPUT_CLASSES.has(cls)) relabel(node.inputs)
-    else if (SEGMENT_OUTPUT_CLASSES.has(cls)) relabel(node.inputs)
-
-    if (!node.__cprbSegmentConfigureHooked) {
-      node.__cprbSegmentConfigureHooked = true
-      const original = node.onConfigure
-      node.onConfigure = function cprbOnConfigure(info) {
-        const result = original?.apply(this, arguments)
-        // configure() replaced the socket objects; re-apply the label.
-        try {
-          relabelSegmentSockets(this)
-        } catch (error) {
-          api.warn('relabelSegmentSockets after configure failed', error)
+    visit(graphData)
+    if (graphData && typeof graphData === 'object') {
+      for (const value of Object.values(graphData)) {
+        if (value && typeof value === 'object' && !Array.isArray(value) && Array.isArray(value.nodes)) {
+          visit(value)
         }
-        return result
       }
     }
   } catch (error) {
-    api.warn('relabelSegmentSockets failed', error)
+    api.warn('segment socket-name migration failed — old saves may load with a dropped wire', error)
   }
 }
