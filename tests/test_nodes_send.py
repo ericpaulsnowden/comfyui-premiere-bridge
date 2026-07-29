@@ -702,3 +702,13 @@ def test_frames_alone_satisfy_the_nothing_to_send_guard(context, _stub_component
     node = PremiereSendResult()
     result = node.execute(frames=_image_batch(2))
     assert Path(result["result"][0]).is_file()
+
+
+_REAL_COMPONENTS_FACTORY = nodes_send._video_from_components_class
+
+
+def test_components_factory_error_names_the_fix() -> None:
+    """Same contract as the VideoFromFile seam: without ComfyUI the factory
+    fails with advice, not a bare ImportError."""
+    with pytest.raises(RuntimeError, match="update ComfyUI"):
+        _REAL_COMPONENTS_FACTORY()
