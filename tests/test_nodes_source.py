@@ -672,3 +672,32 @@ def test_video_factory_error_names_the_fix() -> None:
     replaces the module attribute before any test body runs."""
     with pytest.raises(RuntimeError, match="update ComfyUI"):
         _REAL_VIDEO_FACTORY()
+
+
+def test_clip_source_full_range_selection_collapses_to_untrimmed(tmp_path: Path) -> None:
+    """The panel always sends EXPLICIT in/out — an untouched clip arrives as
+    end == the media's duration, never the 0 shorthand. That must map to
+    core's (0, 0) whole-file sentinel, or Send to Premiere re-encodes every
+    full clip on the way back instead of linking the original in place."""
+    media = _write_tiny_video(tmp_path / "clip.mp4")
+    full = CLIP_FRAMES / CLIP_FPS  # what the panel would send, ticks-rounded
+    *_rest, video = PremiereClipSource().execute(str(media), 0.0, full)
+
+    assert video.get_active_trim_window() == (0.0, 0.0)
+
+
+def test_clip_source_near_full_range_still_counts_as_full(tmp_path: Path) -> None:
+    """Half a frame of tolerance absorbs §11.2's ticks→seconds float rounding."""
+    media = _write_tiny_video(tmp_path / "clip.mp4")
+    almost = CLIP_FRAMES / CLIP_FPS - 0.4 / CLIP_FPS  # inside half a frame
+    *_rest, video = PremiereClipSource().execute(str(media), 0.0, almost)
+
+    assert video.get_active_trim_window() == (0.0, 0.0)
+
+
+def test_clip_source_real_trim_is_not_collapsed(tmp_path: Path) -> None:
+    media = _write_tiny_video(tmp_path / "clip.mp4")
+    *_rest, video = PremiereClipSource().execute(str(media), 0.0, 1.5)
+
+    start, duration = video.get_active_trim_window()
+    assert (start, duration) == (0.0, 1.5)

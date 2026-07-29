@@ -251,6 +251,10 @@ class ClipShot:
     start_seconds: float
     end_seconds: float
     notes: list[str] = field(default_factory=list)
+    #: The media's full probed duration, seconds — lets `execute` recognise a
+    #: FULL-RANGE selection (the panel always sends explicit in/out, so
+    #: "whole clip" arrives as end == duration, never as the 0 sentinel).
+    media_duration: float = 0.0
 
 
 def build_clip_shot(media: Path, start_seconds: float, end_seconds: float) -> ClipShot:
@@ -361,7 +365,13 @@ def build_clip_shot(media: Path, start_seconds: float, end_seconds: float) -> Cl
         "width": int(info.width),
         "height": int(info.height),
     }
-    return ClipShot(shot=shot, start_seconds=start, end_seconds=end, notes=notes)
+    return ClipShot(
+        shot=shot,
+        start_seconds=start,
+        end_seconds=end,
+        notes=notes,
+        media_duration=float(info.duration_seconds),
+    )
 
 
 def _video_from_file_class() -> Any:
@@ -689,7 +699,28 @@ class PremiereClipSource:
             )
         resolved = build_clip_shot(media, _as_float(start_seconds), _as_float(end_seconds))
         shot = resolved.shot
-        video = _clip_video(media, start_seconds, end_seconds)
+        # A FULL-RANGE selection collapses to core's (0, 0) "whole file"
+        # sentinel before the VIDEO is built. The panel always sends explicit
+        # in/out — an untouched clip arrives as end == the media's duration,
+        # not as the 0 shorthand — and without this collapse every such clip
+        # would carry a trim window covering the entire file, which makes
+        # Send to Premiere RE-ENCODE it on the way back instead of linking
+        # the original in place (its trim check keys off
+        # get_active_trim_window() != (0, 0)). Half a frame of tolerance
+        # absorbs the ticks-to-seconds float rounding in §11.2's payload.
+        video_end = _as_float(end_seconds)
+        half_frame = 0.5 / shot["source_fps"] if shot["source_fps"] else 0.0
+        if (
+            _as_float(start_seconds) <= 0
+            and resolved.media_duration > 0
+            and video_end >= resolved.media_duration - half_frame
+        ):
+            video_end = 0.0
+            logger.info(
+                "cprb clip_source: full-range selection -- the VIDEO output is "
+                "untrimmed, so Send to Premiere can link it in place"
+            )
+        video = _clip_video(media, start_seconds, video_end)
         # ALWAYS logged, not just on a fallback: whether Premiere's
         # getOutPoint() is inclusive or exclusive is undocumented, and this
         # node commits to EXCLUSIVE (see build_clip_shot). These are the exact

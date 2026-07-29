@@ -371,9 +371,21 @@ This is an **output node**, so it can sit at the end of a graph.
 | `bin_name` | STRING | `ComfyUI Results` | **yes** | Which bin to import into. |
 | `color_label` | choice | `Default` | **yes** | Premiere label colour, so one run's results stand out in the bin. |
 | `insert_at_playhead` | BOOLEAN | **off** | **yes** | Also drop the clip onto the active sequence at the playhead. |
+| `frames` | IMAGE socket | — | no | A video's frames as an IMAGE batch — see below. |
+| `audio` | AUDIO socket | — | no | Soundtrack for `frames`; muxed into the assembled video. |
+| `fps` | FLOAT | `24.0` | no | Frame rate for `frames` (LTX 2 = 24, classic LTXV = 25). |
 
 The three marked **yes** are performed *by the panel*, so with no panel connected
 they have no effect — the file is still written and reported.
+
+**Audio-video generations (LTX and friends).** Models like LTX 2 hand back the
+video as an **IMAGE batch** and the soundtrack as a separate **AUDIO** — there's
+no VIDEO output anywhere. Wire those two straight into `frames` and `audio`, set
+`fps` to the generation's rate, and this node assembles them into one mp4
+(audio muxed in) and sends it — no Create Video node needed. `frames` differs
+from `image` on purpose: `image` sends a single still; `frames` is the movie.
+Wiring `audio` without `frames` is called out in the summary rather than
+silently dropped — a VIDEO input already carries its own audio.
 
 **Outputs.** `written_path` (STRING) — the file that was handed to Premiere. For
 a linked-in-place video this is the **original source path**, not a copy under
@@ -520,6 +532,17 @@ works, but you're reading those numbers off Premiere by hand.
 - The out point is treated as **exclusive**, which is what makes `frame_count`
   come out right downstream. Every run logs `in`/`out`/`frame_count`/fps to
   ComfyUI's console, so you can compare against Premiere's own duration readout.
+- **The `video` output hands over your ENTIRE selected range** — however long
+  that is. A conditioning-length error like LTX's *"Conditioning frames exceed
+  the length of the latent sequence"* means the clip has more frames than the
+  workflow's target video (e.g. a 481-frame clip guiding a 121-frame
+  generation). Fix it where you'd fix it for an upload: trim the clip's in/out
+  in Premiere before sending, or keep whatever frame-cap/trim node your
+  workflow already used between this node and the model.
+- An **untrimmed** clip (you sent the whole thing) produces an untrimmed VIDEO,
+  so sending it back through **Send to Premiere** links the original file in
+  place — no copy, no re-encode. Only a genuinely trimmed range gets written
+  out.
 
 ---
 

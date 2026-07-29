@@ -551,8 +551,10 @@ field schema; nothing in M1 sends or depends on it.
 
 Inputs (ALL optional — `required` is empty):
 
-- `video` (VIDEO) and/or `image` (IMAGE) — at least one must be wired
-  (else a clear error); both wired = both pushed in one run, video first.
+- `video` (VIDEO) and/or `image` (IMAGE) and/or `frames` (IMAGE, since
+  v0.14.0) — at least one of the three must be wired (else a clear
+  error); everything wired is pushed in one run, order video → assembled
+  frames → image.
 - `label` (STRING, default `""`) — §10.3's `label`, and the stem of any
   file this node writes (`cprb.context.sanitize_name`, empty → `result`).
 - `bin_name` (STRING, default `"ComfyUI Results"`).
@@ -568,6 +570,21 @@ Inputs (ALL optional — `required` is empty):
   when no sequence is open or the track count is unreadable — it never
   guesses a track). The Premiere-side action is VERIFY-flagged pending the
   owner's live run.
+- `frames` (IMAGE, since v0.14.0, appended after `insert_at_playhead`) —
+  a video's frames as an IMAGE batch, for models that output frames and
+  audio SEPARATELY instead of a VIDEO (LTX 2 and friends). Assembled with
+  `audio` into one core VIDEO via `comfy_api`'s `VideoFromComponents`
+  (the exact recipe core's own Create Video node uses; the import is
+  lazy + seam-wrapped like §11.4's `VideoFromFile`, RuntimeError naming
+  the fix on ancient builds). Distinct from `image` on purpose: `image`
+  = one still, `frames` = the movie.
+- `audio` (AUDIO, since v0.14.0) — soundtrack muxed into the `frames`
+  assembly. ONLY pairs with `frames`: wired without it, the summary says
+  `audio: IGNORED` and why (a VIDEO input already carries its own audio;
+  silently dropping sound would be the worst failure mode).
+- `fps` (FLOAT, since v0.14.0, default `24.0`) — frame rate for the
+  `frames` assembly (LTX 2 generates at 24, classic LTXV at 25). Passed
+  to `VideoFromComponents` as a `Fraction`.
 
 Resolution rules (the §2-amending `premiere_results/` conventions):
 
@@ -593,6 +610,10 @@ Resolution rules (the §2-amending `premiere_results/` conventions):
   copy never touch the bytes, and core's `save_to` carries audio streams —
   so `*-audio.mp4` I2V results keep their soundtrack. A `video` input with
   no usable `save_to` is a clear error naming the input.
+- A `frames` assembly is by construction in-memory (`VideoFromComponents`
+  has no stream source), so it always takes the `save_to` branch — one
+  mp4 under `premiere_results/`, audio muxed in. Its summary line is
+  prefixed with `frames: assembled N frame(s) @ Xfps (with/no audio)`.
 - IMAGE → first frame written as PNG. A batched IMAGE (N>1) writes the
   FIRST frame and says so in the summary (list-mode fan-outs, §6.4,
   already run this node once per item).
@@ -900,10 +921,20 @@ Policy — decided, and not for implementation to reopen:
   `(0, 0)` "whole file" trim sentinel, so an untrimmed clip stays honestly
   untrimmed and `Send to Premiere` can still LINK IT IN PLACE instead of
   re-encoding (its trim check keys off `get_active_trim_window()`); a set
-  out point maps to `start_time=start, duration=end-start`. The class is
-  reached through the `_video_from_file_class` seam — the pack's ONLY
-  ComfyUI-internal class dependency; everything else duck-types — so tests
-  stub it and a pre-VIDEO ComfyUI gets a clear "update ComfyUI" error.
+  out point maps to `start_time=start, duration=end-start`. Since v0.14.0
+  a FULL-RANGE selection is COLLAPSED to that untrimmed sentinel too:
+  `start_seconds <= 0` with `end_seconds` within half a source frame of
+  the probed media duration becomes `(0, 0)` (logged at INFO). The §11.2
+  panel always sends an EXPLICIT out point — an untouched clip arrives as
+  `end == duration`, never the `0` shorthand — so before this rule every
+  whole-clip round trip carried a pointless full-file trim window and
+  `Send to Premiere` re-encoded it instead of linking the original. The
+  half-frame tolerance absorbs §11.2's ticks→seconds float rounding. The
+  class is reached through the `_video_from_file_class` seam — one of the
+  pack's only two ComfyUI-internal class dependencies (§10.5's
+  `VideoFromComponents` seam is the other); everything else duck-types —
+  so tests stub it and a pre-VIDEO ComfyUI gets a clear "update ComfyUI"
+  error.
 - `segments` is the reuse that matters: **one** segment in §6.2's frozen dict
   shape, so a clip lifted off the Premiere timeline wires straight into the
   already-shipped `Get Premiere Segment`, `Get Premiere Segment Frame` and

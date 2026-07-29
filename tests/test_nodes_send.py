@@ -140,18 +140,32 @@ def test_node_class_contract() -> None:
 def test_input_types_required_is_empty_and_everything_is_optional() -> None:
     spec = PremiereSendResult.INPUT_TYPES()
     assert spec["required"] == {}
-    assert set(spec["optional"]) == {
-        "video", "image", "label", "bin_name", "color_label", "insert_at_playhead"
-    }
+    # ORDER is asserted, not just membership: ComfyUI restores saved widget
+    # values BY POSITION, so new inputs may only ever be APPENDED (§8).
+    assert list(spec["optional"]) == [
+        "video",
+        "image",
+        "label",
+        "bin_name",
+        "color_label",
+        "insert_at_playhead",
+        "frames",
+        "audio",
+        "fps",
+    ]
     assert spec["optional"]["video"][0] == "VIDEO"
     assert spec["optional"]["image"][0] == "IMAGE"
+    assert spec["optional"]["frames"][0] == "IMAGE"
+    assert spec["optional"]["audio"][0] == "AUDIO"
+    assert spec["optional"]["fps"][0] == "FLOAT"
+    assert spec["optional"]["fps"][1]["default"] == 24.0
     assert spec["optional"]["label"][1]["default"] == ""
     assert spec["optional"]["bin_name"][1]["default"] == "ComfyUI Results"
 
 
 def test_execute_raises_when_nothing_is_wired() -> None:
     node = PremiereSendResult()
-    with pytest.raises(ValueError, match="wire a video and/or an image"):
+    with pytest.raises(ValueError, match="wire a video, frames"):
         node.execute()
 
 
@@ -408,7 +422,13 @@ def test_color_label_widget_is_appended_last_with_default_option() -> None:
     "None" (owner correction 2026-07-24: every Premiere clip carries some
     label, so "None" named a state that cannot exist)."""
     optional = PremiereSendResult.INPUT_TYPES()["optional"]
-    assert list(optional)[-2:] == ["color_label", "insert_at_playhead"]
+    # v0.14.0 appended frames/audio/fps after these two — the invariant is
+    # that color_label/insert_at_playhead keep their v0.9.x POSITIONS, which
+    # the full-order assertion above already pins; here just confirm both
+    # still precede every later addition.
+    order = list(optional)
+    assert order.index("color_label") == 4
+    assert order.index("insert_at_playhead") == 5
     options, spec = optional["color_label"]
     assert spec["default"] == "Default"
     assert options[0] == "Default"
@@ -599,3 +619,86 @@ def test_send_result_event_carries_node_id_for_the_on_node_status(
     nodes_send.set_context(ctx)
     PremiereSendResult().execute(image=_image_batch(1), label="x", unique_id="42")
     assert events[0][1]["node_id"] == "42"
+
+
+# --- frames + audio → assembled video (the LTX shape, §10.5) ---------------------
+
+
+class _StubComponents:
+    def __init__(self, images=None, audio=None, frame_rate=None):
+        self.images = images
+        self.audio = audio
+        self.frame_rate = frame_rate
+
+
+class _StubVideoFromComponents:
+    """Stands in for core's VideoFromComponents; records what it was built
+    from and writes a real file when materialized, so the send loop's
+    resolver path is exercised for real."""
+
+    last = None
+
+    def __init__(self, components):
+        self.components = components
+        _StubVideoFromComponents.last = self
+
+    def save_to(self, path, **_kwargs):
+        Path(path).write_bytes(b"assembled-video")
+
+
+@pytest.fixture()
+def _stub_components(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        nodes_send,
+        "_video_from_components_class",
+        lambda: (_StubVideoFromComponents, _StubComponents),
+    )
+    _StubVideoFromComponents.last = None
+
+
+def test_frames_assemble_into_a_video_and_send(context, _stub_components) -> None:
+    """An IMAGE batch + AUDIO (LTX's outputs) become ONE sent mp4."""
+    node = PremiereSendResult()
+    frames = _image_batch(9)
+    audio = {"waveform": "fake", "sample_rate": 48000}
+
+    result = node.execute(frames=frames, audio=audio, fps=24.0, label="ltx result")
+
+    built = _StubVideoFromComponents.last
+    assert built is not None
+    assert built.components.images is frames
+    assert built.components.audio is audio
+    assert float(built.components.frame_rate) == 24.0
+
+    written = Path(result["result"][0])
+    assert written.is_file()
+    assert written.suffix == ".mp4"
+    assert written.parent.name == "premiere_results"
+
+    summary = "\n".join(result["ui"]["text"])
+    assert "assembled 9 frame(s) @ 24fps" in summary
+    assert "with audio" in summary
+
+
+def test_frames_without_audio_say_so(context, _stub_components) -> None:
+    node = PremiereSendResult()
+    result = node.execute(frames=_image_batch(3), fps=25.0)
+
+    assert _StubVideoFromComponents.last.components.audio is None
+    assert "no audio" in "\n".join(result["ui"]["text"])
+
+
+def test_audio_without_frames_is_ignored_loudly(context) -> None:
+    """Silent audio loss would be the worst outcome — the summary must say it."""
+    node = PremiereSendResult()
+    result = node.execute(image=_image_batch(1), audio={"waveform": "x"})
+
+    summary = "\n".join(result["ui"]["text"])
+    assert "audio: IGNORED" in summary
+    assert "only pairs with frames" in summary
+
+
+def test_frames_alone_satisfy_the_nothing_to_send_guard(context, _stub_components) -> None:
+    node = PremiereSendResult()
+    result = node.execute(frames=_image_batch(2))
+    assert Path(result["result"][0]).is_file()

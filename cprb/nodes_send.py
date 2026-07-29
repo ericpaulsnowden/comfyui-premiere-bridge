@@ -227,6 +227,50 @@ def _tensor_to_pil(image: Any) -> Any:
     return Image.fromarray(array, mode="RGB")
 
 
+def _video_from_components_class() -> Any:
+    """Core's ``(VideoFromComponents, VideoComponents)`` pair, lazily.
+
+    The seam pattern of ``nodes_source._video_from_file_class``: this is the
+    module's only ComfyUI-internal class dependency, imported lazily and
+    reachable through one monkeypatchable function so the test suite (which
+    runs without ComfyUI on ``sys.path``) can stub it and assert the assembly
+    arithmetic.
+
+    Raises:
+        RuntimeError: this ComfyUI predates the core VIDEO type.
+    """
+    try:
+        from comfy_api.input_impl import VideoFromComponents
+        from comfy_api.util import VideoComponents
+    except ImportError as exc:
+        raise RuntimeError(
+            "Send to Premiere: this ComfyUI build has no core VIDEO type "
+            "(comfy_api VideoFromComponents) -- update ComfyUI to a 2025+ build "
+            "to use the frames/audio inputs."
+        ) from exc
+    return VideoFromComponents, VideoComponents
+
+
+def _frames_to_video(frames: Any, audio: Any, fps: float) -> Any:
+    """An IMAGE batch (+ optional AUDIO) as a core VIDEO object (§10.5).
+
+    The LTX shape: audio-video models hand back the video as an IMAGE batch
+    and the soundtrack as a separate AUDIO — there is no VIDEO anywhere in
+    the graph unless the user assembles one. This is core ``CreateVideo``'s
+    exact recipe (``VideoFromComponents(VideoComponents(images, audio,
+    frame_rate))``, nodes_video.py), inlined so "generation → Premiere, with
+    sound" is one node instead of two. Lazy like everything else here:
+    nothing encodes until :func:`materialize_video` calls ``save_to``, which
+    writes an mp4 with the audio muxed in.
+    """
+    from fractions import Fraction
+
+    video_cls, components_cls = _video_from_components_class()
+    return video_cls(
+        components_cls(images=frames, audio=audio, frame_rate=Fraction(fps).limit_denominator())
+    )
+
+
 def _resolve_video_file(video: Any, results_dir: Path, label: str) -> tuple[Path, list[str]]:
     """*video* as ONE durable on-disk file (PROTOCOL.md §10.5 durability rules).
 
@@ -418,6 +462,46 @@ class PremiereSendResult:
                         ),
                     },
                 ),
+                # Appended after insert_at_playhead (§8's position rule).
+                # The LTX shape (v0.14.0): audio-video generations arrive as
+                # an IMAGE batch + a separate AUDIO, with no VIDEO in sight —
+                # these three assemble them here (core CreateVideo's recipe)
+                # so the result reaches Premiere with its soundtrack, one node.
+                "frames": (
+                    "IMAGE",
+                    {
+                        "tooltip": (
+                            "A video's frames as an IMAGE batch (an LTX/VAE-decode "
+                            "output). Assembled into a real video at `fps`, with "
+                            "`audio` muxed in when wired — unlike `image`, which "
+                            "sends a single still."
+                        ),
+                    },
+                ),
+                "audio": (
+                    "AUDIO",
+                    {
+                        "tooltip": (
+                            "Soundtrack for `frames` (an LTX audio output). Only "
+                            "used when `frames` is wired — a VIDEO input already "
+                            "carries its own audio."
+                        ),
+                    },
+                ),
+                "fps": (
+                    "FLOAT",
+                    {
+                        "default": 24.0,
+                        "min": 1.0,
+                        "max": 120.0,
+                        "step": 1.0,
+                        "tooltip": (
+                            "Frame rate for the `frames` input — match the "
+                            "generation (LTX 2 = 24, classic LTXV = 25). Ignored "
+                            "unless `frames` is wired."
+                        ),
+                    },
+                ),
             },
             # UNIQUE_ID lets the node identify ITSELF to the frontend
             # (§10.6's per-node status line) and key the retry bookkeeping
@@ -462,15 +546,19 @@ class PremiereSendResult:
         bin_name: str = DEFAULT_BIN_NAME,
         color_label: str = COLOR_LABEL_DEFAULT,
         insert_at_playhead: bool = False,
+        frames: Any = None,
+        audio: Any = None,
+        fps: float = 24.0,
         unique_id: Any = None,
     ) -> dict[str, Any]:
         if _context is None:
             raise RuntimeError(
                 "PremiereSendResult: no BridgeContext configured (set_context was never called)"
             )
-        if video is None and image is None:
+        if video is None and image is None and frames is None:
             raise ValueError(
-                "PremiereSendResult: nothing to send -- wire a video and/or an image input"
+                "PremiereSendResult: nothing to send -- wire a video, frames, "
+                "and/or an image input"
             )
 
         results_dir = _context.output_dir / RESULTS_DIRNAME
@@ -485,10 +573,37 @@ class PremiereSendResult:
         resolved: list[Path] = []
         sent: list[dict[str, Any]] = []
 
-        for input_value, resolver in ((video, _resolve_video_file), (image, _resolve_image_file)):
+        # The LTX shape (§10.5): frames + optional audio assemble into a real
+        # VIDEO here, then ride the exact same resolver as the `video` input —
+        # a components-backed VIDEO has no source file, so _resolve_video_file
+        # takes its materialize branch and save_to muxes the audio in.
+        assembled = None
+        assembled_note = ""
+        if frames is not None:
+            assembled = _frames_to_video(frames, audio, float(fps))
+            frame_count = int(frames.shape[0]) if hasattr(frames, "shape") else len(frames)
+            assembled_note = (
+                f"frames: assembled {frame_count} frame(s) @ {fps:g}fps "
+                f"({'with' if audio is not None else 'no'} audio)"
+            )
+        elif audio is not None:
+            # Honest note, not an error: the run still sends whatever else is
+            # wired, but silent audio loss would be the worst outcome here.
+            lines.append(
+                "audio: IGNORED -- the audio input only pairs with frames "
+                "(a VIDEO input already carries its own audio)"
+            )
+
+        for input_value, resolver, extra_note in (
+            (video, _resolve_video_file, ""),
+            (assembled, _resolve_video_file, assembled_note),
+            (image, _resolve_image_file, ""),
+        ):
             if input_value is None:
                 continue
             path, notes = resolver(input_value, results_dir, label)
+            if extra_note:
+                notes = [extra_note, *notes]
             resolved.append(path)
             # Called through the module object (not a from-import) so tests
             # monkeypatching `cprb.routes.push_result` intercept this path
