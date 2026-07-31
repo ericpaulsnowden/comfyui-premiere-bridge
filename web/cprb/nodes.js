@@ -521,8 +521,14 @@ function applyGating(state) {
   }
   if (state.noteEl) {
     state.noteEl.textContent = remote ? 'Host machine only' : ''
+    // Phrased from the VIEWER's chair (2026-07-30, cross-plugin remote
+    // audit): the old text -- "when ComfyUI is running on this machine" --
+    // read as if the feature should work right here, which is the opposite
+    // of what the note exists to say. Name the machine that CAN do it.
     state.noteEl.title = remote
-      ? 'File browsing and folder reveal only work when ComfyUI is running on this machine.'
+      ? 'This browser is not on the machine running ComfyUI. File browsing ' +
+        'and folder reveal run on that machine -- open ComfyUI there to use ' +
+        'them. Sending to Premiere still works from here.'
       : ''
   }
 }
