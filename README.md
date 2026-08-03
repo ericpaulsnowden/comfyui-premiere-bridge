@@ -10,12 +10,13 @@ runs inside Premiere.
 
 ## Do I need to install anything in Premiere?
 
-**For five of the eight nodes: no — nothing at all.** They read and write files,
+**For six of the eight nodes: no — nothing at all.** They read and write files,
 and you move those files with menus Premiere already has (`File > Import`,
 `File > Export > Final Cut Pro XML`). That half is the floor, and it always
-works.
+works. (**Send to Premiere** counts here: it always writes the result to disk
+and tells you the path — the panel only saves you the manual import.)
 
-The other three are faster with the **ComfyUI Bridge panel** — an optional
+Three of the eight are faster with the **ComfyUI Bridge panel** — an optional
 plugin you load into Premiere yourself ([install below](#2-the-comfyui-bridge-panel--optional)).
 It removes the manual export/import step. Three honest levels:
 
@@ -292,7 +293,7 @@ there's no off-by-one to correct.
 **Gotchas.** `index` has no upper limit, so overshooting the segment count is the
 realistic mistake — you get an error naming the valid range, but only once the
 run reaches this node, not when you press Run. An **empty** segment list is a hard
-error here (use [**Iterate Premiere Segments**](#iterate-shots) if you want an empty edit to
+error here (use [**Iterate Premiere Segments**](#iterate-premiere-segments) if you want an empty edit to
 simply do nothing downstream). All values are computed at the segment's *own* frame
 rate, never the sequence rate, so for a clip Premiere conformed to a different
 rate prefer `in_seconds` / `duration_seconds` over the frame numbers.
@@ -428,8 +429,8 @@ Hands your graph **the still under Premiere's playhead**. Click
 **and the workflow runs**, no trip back to ComfyUI. One button in Premiere is
 the whole gesture; with **Send to Premiere** at the end of the graph, the result
 is back in your bin before you've switched windows. Prefer to press Run
-yourself? Turn off **Settings → Premiere Bridge → Auto-run** and the button only
-fills the node.
+yourself? Turn off **Run the workflow when Premiere sends a frame or clip**,
+under **Settings → Premiere Bridge**, and the button only fills the node.
 
 **Inputs.** `path` (STRING, default empty) — an ordinary, visible text field. The
 panel writes it; you can also read it (a second confirmation that something
@@ -489,7 +490,8 @@ source.
 All three are ordinary visible fields the panel writes.
 
 Like Frame → ComfyUI above, the panel button **also runs the workflow** unless
-you turn off **Settings → Premiere Bridge → Auto-run**.
+you turn off **Run the workflow when Premiere sends a frame or clip**, under
+**Settings → Premiere Bridge**.
 
 **Outputs.** `segments` (`CPRB_SEGMENT_LIST`) · `path` (STRING) · `start_seconds`
 (FLOAT) · `end_seconds` (FLOAT) · `video` (VIDEO) — the three middle ones report
@@ -575,19 +577,19 @@ two fighting over the connection.
 
 ---
 
-## Example workflow
+## Example workflows
 
-[**`examples/premiere_roundtrip.json`**](examples/premiere_roundtrip.json) is the
-whole loop in four nodes, using nothing but this pack and one core ComfyUI node:
+The [`examples/`](examples/) folder holds ready-to-open workflows, ordered
+simplest first. Drag one onto the ComfyUI canvas to load it; each carries a note
+on the canvas explaining what to click, in order.
 
-```
-Frame from Premiere ──▶ Invert Image Colors ──▶ Send to Premiere
-   (the still at your playhead)                  (bin: "ComfyUI Results")
-```
+Most of them need **no Premiere at all** — they read an exported timeline, or
+build one for you to import by hand, so you can learn the pack before you install
+anything. The ones that read the playhead or a clip selection need the panel,
+because they *are* the panel round trip; each says so up front.
 
-The inverted colours make a successful round trip obvious at a glance. See
-[examples/README.md](examples/README.md) for what to click, in order. This is the
-one example that genuinely needs the panel — it *is* the panel round trip.
+See [examples/README.md](examples/README.md) for the full index and which files
+require Premiere.
 
 ---
 

@@ -1,0 +1,472 @@
+{
+  "id": "cb8d1c00-0001-4000-8000-000000000001",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        -300
+      ],
+      "size": [
+        1340,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Start here",
+      "properties": {},
+      "widgets_values": [
+        "# Read a Premiere edit\n\n**No Premiere plugin needed.** Nothing to install, nothing to download. This one takes an edit you exported out of Premiere and tells you what is inside it.\n\n**1.** On **Load Premiere Timeline**, click **Browse...** and pick `sample_timeline.xml`, which sits next to this file in the pack's `examples/` folder.\n\nTo use your own edit instead: in Premiere, select a sequence and choose **File > Export > Final Cut Pro XML**, then Browse to the file you just wrote.\n\n**2.** Press **Run**. Three text previews fill in. Read them top to bottom.\n\nThe sample edit points at video files that do not exist on your machine. That is fine and deliberate -- these three nodes only read the *edit*: the cuts, the names, the timings. Nothing opens a media file, so nothing can be missing."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 1,
+      "type": "PremiereLoadTimeline",
+      "pos": [
+        60,
+        60
+      ],
+      "size": [
+        400,
+        190
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "links": [
+            2,
+            4
+          ]
+        },
+        {
+          "name": "count",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "summary",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereLoadTimeline"
+      },
+      "widgets_values": [
+        "",
+        true
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PreviewAny",
+      "pos": [
+        540,
+        60
+      ],
+      "size": [
+        420,
+        190
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 1
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "title": "the whole edit, one line per segment"
+    },
+    {
+      "id": 7,
+      "type": "MarkdownNote",
+      "pos": [
+        1000,
+        60
+      ],
+      "size": [
+        740,
+        250
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "What this node gives you",
+      "properties": {},
+      "widgets_values": [
+        "## Load Premiere Timeline\n\nHands you the whole edit as a list of segments -- one per clip, in the order they play, across every video track.\n\n**skip_disabled** is on, so muted and disabled clips are left out. Turn it off and the sample gains a fourth segment: a take the editor had switched off.\n\n**summary** is the readable version of that same list. Wire it into a text preview any time you want to see what you actually loaded.\n\nThe **Browse...** bar lists files on the machine running ComfyUI. If you are viewing ComfyUI from a different machine the button is hidden and the bar reads *Host machine only* -- type the path into `file_path` by hand instead, naming the file as that machine sees it."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 3,
+      "type": "PremiereGetShot",
+      "pos": [
+        60,
+        390
+      ],
+      "size": [
+        400,
+        220
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "path",
+          "type": "STRING",
+          "links": [
+            3
+          ]
+        },
+        {
+          "name": "duration_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "in_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "frame_count",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "in_frame",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "name",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereGetShot"
+      },
+      "widgets_values": [
+        0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "PreviewAny",
+      "pos": [
+        540,
+        390
+      ],
+      "size": [
+        420,
+        150
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 3
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "title": "segment 0's source file"
+    },
+    {
+      "id": 8,
+      "type": "MarkdownNote",
+      "pos": [
+        1000,
+        390
+      ],
+      "size": [
+        540,
+        250
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Picking one out",
+      "properties": {},
+      "widgets_values": [
+        "## One segment at a time\n\n**Get Premiere Segment** pulls a single segment out by number. `index` is `0` here -- the first clip. Change it to `1` or `2` and Run again.\n\nYou get nine things back about that segment: its source file, where the clip starts and how long it runs, its frame count, its frame rate, its name, and its pixel size. Only `path` is wired up in this demo; drag out from any of the others when you need them.\n\nAsk for a segment that isn't there and the node says so plainly instead of guessing."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 5,
+      "type": "PremiereIterateShots",
+      "pos": [
+        60,
+        720
+      ],
+      "size": [
+        400,
+        200
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "path",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "duration_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "in_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "frame_count",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "in_frame",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "name",
+          "type": "STRING",
+          "links": [
+            5
+          ]
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereIterateShots"
+      }
+    },
+    {
+      "id": 6,
+      "type": "PreviewAny",
+      "pos": [
+        540,
+        720
+      ],
+      "size": [
+        420,
+        170
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 5
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "title": "every segment's name - one preview per cut"
+    },
+    {
+      "id": 9,
+      "type": "MarkdownNote",
+      "pos": [
+        1000,
+        720
+      ],
+      "size": [
+        520,
+        250
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Doing the whole edit",
+      "properties": {},
+      "widgets_values": [
+        "## Every segment at once\n\n**Iterate Premiere Segments** is the same idea without the `index`. It fires once per segment, so everything downstream of it runs once per cut. No loop node, no batching, nothing to set up.\n\nHere it drives a text preview, so you get one preview box per clip. Put a real workflow after it instead and you have just processed an entire edit in a single Run.\n\nCareful with this one on a long edit -- a hundred cuts means a hundred runs of everything downstream."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      2,
+      2,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      1,
+      0,
+      3,
+      0,
+      "CPRB_SEGMENT_LIST"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "STRING"
+    ],
+    [
+      4,
+      1,
+      0,
+      5,
+      0,
+      "CPRB_SEGMENT_LIST"
+    ],
+    [
+      5,
+      5,
+      6,
+      6,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "1 - Load the exported edit",
+      "bounding": [
+        40,
+        10,
+        1700,
+        300
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "2 - One segment at a time",
+      "bounding": [
+        40,
+        340,
+        1500,
+        300
+      ],
+      "color": "#8A8",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "3 - Every segment at once",
+      "bounding": [
+        40,
+        670,
+        1480,
+        300
+      ],
+      "color": "#b58b2a",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.75,
+      "offset": [
+        60,
+        340
+      ]
+    }
+  },
+  "version": 0.4
+}

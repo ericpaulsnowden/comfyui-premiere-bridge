@@ -1,0 +1,411 @@
+{
+  "id": "cb8d1c00-0003-4000-8000-000000000003",
+  "revision": 0,
+  "last_node_id": 12,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        -320
+      ],
+      "size": [
+        1340,
+        260
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Start here",
+      "properties": {},
+      "widgets_values": [
+        "# Preview a segment, then hand it back\n\n**No Premiere plugin needed.** The last node in this graph works with Premiere closed, or never installed at all -- it just tells you where it put the file.\n\nThis one actually decodes a frame, so it needs an edit whose footage really exists on disk.\n\n**1.** Run **02_build_a_timeline_for_premiere.json** first. It writes a small timeline with real video sitting next to it.\n\n**2.** Back here, click **Browse...** on **Load Premiere Timeline** and pick `output/premiere_timelines/Bridge Demo/Bridge Demo.xml`.\n\n**3.** Press **Run**.\n\nAny edit exported from Premiere works just as well, so long as its footage is where the edit says it is. `sample_timeline.xml` from demo 01 will *not* work here -- its clips are made up, and this graph has to open a real file."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 1,
+      "type": "PremiereLoadTimeline",
+      "pos": [
+        60,
+        60
+      ],
+      "size": [
+        400,
+        190
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "count",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "summary",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereLoadTimeline"
+      },
+      "widgets_values": [
+        "",
+        true
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PreviewAny",
+      "pos": [
+        540,
+        60
+      ],
+      "size": [
+        380,
+        190
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 1
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "title": "check the paths are real"
+    },
+    {
+      "id": 7,
+      "type": "MarkdownNote",
+      "pos": [
+        980,
+        10
+      ],
+      "size": [
+        440,
+        300
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Where the edit comes from",
+      "properties": {},
+      "widgets_values": [
+        "## Same loader as demo 01\n\n**Load Premiere Timeline** doesn't care where the edit came from -- one written by ComfyUI, one exported from Premiere, they read the same.\n\nThe difference here is that we're about to open one of the media files for real. If the summary preview shows paths that don't exist on this machine, the frame decode is going to fail, and it will say so.\n\n**skip_disabled** on means clips the editor switched off are skipped, so segment numbers here match what you'd see cut together."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 3,
+      "type": "PremiereShotFrame",
+      "pos": [
+        60,
+        390
+      ],
+      "size": [
+        380,
+        120
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            3,
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereShotFrame"
+      },
+      "widgets_values": [
+        0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [
+        500,
+        390
+      ],
+      "size": [
+        400,
+        260
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 3
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "title": "the frame, straight off the timeline"
+    },
+    {
+      "id": 8,
+      "type": "MarkdownNote",
+      "pos": [
+        980,
+        340
+      ],
+      "size": [
+        400,
+        340
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Decoding a real frame",
+      "properties": {},
+      "widgets_values": [
+        "## Get Premiere Segment Frame\n\nReaches into segment `index` and decodes the frame the editor cut *to* -- its in-point, not the head of the source file. That's nearly always the frame you want: the one the audience sees first on that shot.\n\nChange `index` to walk through the edit shot by shot.\n\nWhat comes out is an ordinary IMAGE. Anything you'd normally do to an image, you can do to this one -- which is the whole point.\n\nSlow the first time on a long file: it has to seek into the video."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 5,
+      "type": "ImageInvert",
+      "pos": [
+        60,
+        760
+      ],
+      "size": [
+        300,
+        30
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageInvert"
+      }
+    },
+    {
+      "id": 6,
+      "type": "PremiereSendResult",
+      "pos": [
+        420,
+        760
+      ],
+      "size": [
+        400,
+        260
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "shape": 7,
+          "type": "VIDEO",
+          "link": null
+        },
+        {
+          "name": "image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "written_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereSendResult"
+      },
+      "widgets_values": [
+        "segment 0 preview",
+        "ComfyUI Results",
+        "Default",
+        false,
+        24.0
+      ]
+    },
+    {
+      "id": 9,
+      "type": "MarkdownNote",
+      "pos": [
+        980,
+        710
+      ],
+      "size": [
+        460,
+        480
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Handing it back",
+      "properties": {},
+      "widgets_values": [
+        "## Send to Premiere -- even with no Premiere\n\nThe colour inversion is here so you can tell at a glance that it made the round trip. Replace it with real work once you believe it.\n\n**With the Bridge panel running**, the result lands in Premiere's `ComfyUI Results` bin, labelled `segment 0 preview`.\n\n**Without it**, the Run still succeeds. The node writes the file and paints a `\u26a0 Premiere` line on itself, and a warning toast hands you the file's full path so you can import it by hand. A failed hand-off is never silent.\n\n**bin_name** is created the first time and reused after. **color_label** tints the clip in Premiere so ComfyUI results are easy to spot.\n\n**insert_at_playhead** is off, so results only go to the bin. Switch it on and the clip also drops onto your open sequence at the playhead, as a single undo step."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      2,
+      2,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      1,
+      0,
+      3,
+      0,
+      "CPRB_SEGMENT_LIST"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      5,
+      3,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      4,
+      5,
+      0,
+      6,
+      1,
+      "IMAGE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "1 - Load an edit whose footage exists",
+      "bounding": [
+        40,
+        10,
+        900,
+        300
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "2 - Decode the frame the editor cut to",
+      "bounding": [
+        40,
+        340,
+        900,
+        340
+      ],
+      "color": "#8A8",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "3 - Process it and hand it back",
+      "bounding": [
+        40,
+        710,
+        900,
+        340
+      ],
+      "color": "#b58b2a",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.75,
+      "offset": [
+        60,
+        350
+      ]
+    }
+  },
+  "version": 0.4
+}

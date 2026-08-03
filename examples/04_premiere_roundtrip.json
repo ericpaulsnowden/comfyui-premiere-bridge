@@ -1,0 +1,225 @@
+{
+  "id": "cb8d1c00-0004-4000-8000-000000000004",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 4,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        -320
+      ],
+      "size": [
+        1200,
+        290
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Start here",
+      "properties": {},
+      "widgets_values": [
+        "# Premiere round trip -- one button, the whole loop\n\n**This one needs the ComfyUI Bridge panel running in Premiere.** It *is* the panel round trip: a frame goes out, an inverted frame comes back. Demos 01, 02 and 03 need no Premiere at all -- start there if you haven't installed the panel yet.\n\n**1.** In Premiere, open a sequence and park the playhead on the frame you want.\n\n**2.** In the ComfyUI Bridge panel, click **Frame -> ComfyUI**. The frame's path lands in the **Frame from Premiere** node below *and the workflow runs by itself* -- there is nothing to press here. (Prefer pressing Run yourself? Turn off **Run the workflow when Premiere sends a frame or clip**, under **Settings > Premiere Bridge**.)\n\n**3.** In Premiere, open the **ComfyUI Results** bin.\n\n**Success looks like:** one new clip called `inverted frame`, with obviously, unmistakably inverted colours. That single clip proves both directions at once -- the frame got out, the result got back in.\n\n**If the run finishes and nothing appears**, look at the Send to Premiere node. It grows a status line labelled `\u2713 Premiere` when the hand-off worked and `\u26a0 Premiere` when it didn't, and a failure also raises a warning toast carrying the full path of the file it saved, so you can import that by hand. It never fails quietly."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 1,
+      "type": "PremiereFrameSource",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        340,
+        130
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereFrameSource"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ImageInvert",
+      "pos": [
+        440,
+        60
+      ],
+      "size": [
+        260,
+        30
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageInvert"
+      }
+    },
+    {
+      "id": 3,
+      "type": "PremiereSendResult",
+      "pos": [
+        760,
+        60
+      ],
+      "size": [
+        400,
+        230
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "shape": 7,
+          "type": "VIDEO",
+          "link": null
+        },
+        {
+          "name": "image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "written_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereSendResult"
+      },
+      "widgets_values": [
+        "inverted frame",
+        "ComfyUI Results",
+        "Default",
+        false,
+        24.0
+      ]
+    },
+    {
+      "id": 5,
+      "type": "MarkdownNote",
+      "pos": [
+        20,
+        360
+      ],
+      "size": [
+        1180,
+        330
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "What to change",
+      "properties": {},
+      "widgets_values": [
+        "## What to change\n\n**Swap the invert.** Invert Image Colors is a placeholder. Put any image workflow in its place -- the two Premiere nodes on either side are the only parts that have to stay.\n\n**insert_at_playhead** is off, the safe default: results land only in the bin. Switch it on and the result also drops onto your open sequence at the playhead, as one undo step.\n\n**The unused outputs.** Frame from Premiere also gives you `width`, `height` and `path`. Wire them up when your workflow needs to know the frame's real size.\n\n**Clips work the same way.** The panel's **Clip -> ComfyUI** button drives *Clip from Premiere*, which has a VIDEO output you can send straight back. That's `05_clip_from_premiere.json`.\n\n**One machine, both sides.** The panel and ComfyUI trade file paths, not file contents, so they have to be looking at the same disk."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "IMAGE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "Premiere -> ComfyUI -> Premiere",
+      "bounding": [
+        20,
+        10,
+        1180,
+        300
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.85,
+      "offset": [
+        60,
+        300
+      ]
+    }
+  },
+  "version": 0.4
+}

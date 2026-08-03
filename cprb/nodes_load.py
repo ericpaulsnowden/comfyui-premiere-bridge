@@ -407,7 +407,7 @@ class PremiereIterateShots:
         "path and the frame/seconds outputs the same way you would for Get Premiere Segment, "
         "and one Run processes every segment in order. Outputs are the same path, timing, and "
         "resolution fields as Get Premiere Segment, just fanned out one segment at a time. An "
-        "empty shot list simply runs nothing downstream."
+        "empty segment list simply runs nothing downstream."
     )
 
     @classmethod
@@ -456,12 +456,12 @@ class PremiereShotFrame:
     CATEGORY = "Premiere Bridge/Handoffs"
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
-    OUTPUT_TOOLTIPS = ("The decoded preview frame at the shot's in-point.",)
+    OUTPUT_TOOLTIPS = ("The decoded preview frame at the segment's in-point.",)
     FUNCTION = "execute"
     DESCRIPTION = (
         "Decodes a single preview frame at one segment's in-point and returns it as an IMAGE — "
         "from a segment list from Load Premiere Timeline or Clip from Premiere, either way. "
-        "Handy for previewing a shot, or feeding a first-frame reference into a generation, "
+        "Handy for previewing a segment, or feeding a first-frame reference into a generation, "
         "without loading the whole clip. Takes the same segments list and index as Get "
         "Premiere Segment. Decoding happens only when this node runs, so it costs nothing "
         "until you actually need the preview."

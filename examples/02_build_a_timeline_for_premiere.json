@@ -1,0 +1,459 @@
+{
+  "id": "cb8d1c00-0002-4000-8000-000000000002",
+  "revision": 0,
+  "last_node_id": 12,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        -300
+      ],
+      "size": [
+        1500,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Start here",
+      "properties": {},
+      "widgets_values": [
+        "# Build a timeline Premiere can import\n\n**No Premiere plugin needed**, and this one runs exactly as shipped -- it uses ComfyUI's own `example.png`, so just press **Run**.\n\nTwo one-second clips get made (one plain, one colour-inverted) and handed to **Save Premiere Timeline**, which lays them end to end on V1 and writes a folder.\n\n**What you get:** `output/premiere_timelines/Bridge Demo/`, holding `Bridge Demo.xml`, `Bridge Demo.edl` and a `media/` folder with the clips in it. Click **Open folder** on the Save node to go straight there.\n\n**In Premiere:** `File > Import` the **.xml**. The sequence turns up with its media already linked -- no relinking, no dragging clips into place.\n\nThe colour inversion is only there so you can tell the two clips apart at a glance and know the order came out right."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        300,
+        314
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "RepeatImageBatch",
+      "pos": [
+        380,
+        60
+      ],
+      "size": [
+        270,
+        60
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RepeatImageBatch"
+      },
+      "title": "24 frames = 1 second",
+      "widgets_values": [
+        24
+      ]
+    },
+    {
+      "id": 3,
+      "type": "CreateVideo",
+      "pos": [
+        700,
+        60
+      ],
+      "size": [
+        280,
+        100
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 3
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CreateVideo"
+      },
+      "title": "clip 1 - the plain one",
+      "widgets_values": [
+        24,
+        8
+      ]
+    },
+    {
+      "id": 4,
+      "type": "ImageInvert",
+      "pos": [
+        380,
+        200
+      ],
+      "size": [
+        270,
+        30
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageInvert"
+      }
+    },
+    {
+      "id": 5,
+      "type": "RepeatImageBatch",
+      "pos": [
+        380,
+        290
+      ],
+      "size": [
+        270,
+        60
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            6
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RepeatImageBatch"
+      },
+      "widgets_values": [
+        24
+      ]
+    },
+    {
+      "id": 6,
+      "type": "CreateVideo",
+      "pos": [
+        700,
+        290
+      ],
+      "size": [
+        280,
+        100
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 6
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CreateVideo"
+      },
+      "title": "clip 2 - the inverted one",
+      "widgets_values": [
+        24,
+        8
+      ]
+    },
+    {
+      "id": 11,
+      "type": "MarkdownNote",
+      "pos": [
+        20,
+        520
+      ],
+      "size": [
+        1000,
+        230
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Swap this out for your own work",
+      "properties": {},
+      "widgets_values": [
+        "## This half is a stand-in\n\n**Load Image > Repeat Image Batch > Create Video** is the cheapest possible way to make a video clip: one still, held for 24 frames, at 24fps. One second.\n\nReplace it with whatever you actually generate. An image workflow feeding Create Video, or a video model's output going straight into the Save node -- anything that produces a **VIDEO** will do. Nothing else in this file has to change.\n\nWant a different picture? Swap `example.png` on the Load Image node for any image already in your ComfyUI `input` folder, or upload one.\n\nWant longer clips? Raise **Repeat Image Batch**'s amount. 24 frames per second of footage."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 7,
+      "type": "PremiereSaveTimeline",
+      "pos": [
+        1080,
+        60
+      ],
+      "size": [
+        420,
+        420
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video_1",
+          "shape": 7,
+          "type": "VIDEO",
+          "link": 5
+        },
+        {
+          "name": "video_2",
+          "shape": 7,
+          "type": "VIDEO",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "timeline_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereSaveTimeline"
+      },
+      "widgets_values": [
+        "Bridge Demo",
+        "24",
+        "Link in place",
+        "# One absolute media path per line, added after the video_N inputs.\n# Blank lines and # comments are ignored.\n",
+        true,
+        false,
+        ""
+      ]
+    },
+    {
+      "id": 12,
+      "type": "MarkdownNote",
+      "pos": [
+        1060,
+        560
+      ],
+      "size": [
+        580,
+        580
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Every setting on the Save node",
+      "properties": {},
+      "widgets_values": [
+        "## Save Premiere Timeline\n\n**video_1, video_2, ...** -- connect the last empty socket and a fresh one appears. Wire in as many clips as you like; they land on V1 in socket order.\n\n**sequence_name** names both the folder and the sequence you'll see in Premiere.\n\n**fps** is the sequence's frame rate. Keep it matching what you fed Create Video, or the clips play at the wrong speed.\n\n**media** -- this only affects the **paths** entries below; wired `video_N` clips are always written into `media/` either way. *Link in place* points the edit at your listed files where they already sit. *Collect into folder* copies them into `media/` next to the .xml first, which is what you want if the folder is going to somebody else.\n\n**paths** -- anything you type in here gets added after the wired clips, one absolute file path per line. Handy for dropping in footage that never went through ComfyUI. Blank lines and `#` comments are ignored, which is why the box already has two comment lines in it.\n\n**write_edl** is on, so you also get a plain `.edl` that almost any editor will open.\n**write_otio** stays off -- it needs an extra Python package installed first.\n\n**output_dir** left empty means ComfyUI's own output folder. Type a path to write somewhere else."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      1,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      4,
+      4,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      5,
+      3,
+      0,
+      7,
+      0,
+      "VIDEO"
+    ],
+    [
+      6,
+      5,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      6,
+      0,
+      7,
+      1,
+      "VIDEO"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "1 - Make two video clips",
+      "bounding": [
+        20,
+        10,
+        1010,
+        470
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "2 - Write a folder Premiere can import",
+      "bounding": [
+        1060,
+        10,
+        470,
+        500
+      ],
+      "color": "#8A8",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [
+        80,
+        340
+      ]
+    }
+  },
+  "version": 0.4
+}

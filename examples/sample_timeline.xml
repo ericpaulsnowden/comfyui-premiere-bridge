@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<!--
+  sample_timeline.xml - a stand-in for a real Premiere export.
+
+  This is what "File > Export > Final Cut Pro XML" produces out of Premiere,
+  trimmed down by hand so you can read it. It is here so 01_read_a_premiere_edit.json
+  has something to open the moment you install this pack.
+
+  The clips point at /Volumes/Footage/demo/... which does NOT exist on your machine.
+  That is deliberate and harmless: Load / Get Segment / Iterate Segments only read the
+  edit itself - the cuts, the names, the timings - and never open a media file.
+  (03_preview_and_send_a_segment.json DOES decode video, which is why it uses a
+  timeline you generate yourself rather than this one.)
+
+  What it deliberately contains, so the nodes get a real workout:
+    - a 23.976fps NTSC sequence, the rate that trips up naive parsers
+    - a transition between the first two clips, and a clipitem whose <start> is -1
+      (Premiere writes that when a clip sits under a transition; the start has to be
+      recovered from its neighbour)
+    - a disabled clip, skipped unless you turn "skip_disabled" off
+    - two video tracks, so segments have to be sorted across tracks by time
+    - one source file used by two different clipitems
+    - a URL-encoded space in a path, and an audio track that is ignored
+-->
+<xmeml version="4">
+  <sequence id="sequence-1">
+    <uuid>7c3f1b8e-2a44-4f11-9d0a-6e5b2c9f10aa</uuid>
+    <duration>360</duration>
+    <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+    <name>Sample Premiere Edit</name>
+    <media>
+      <video>
+        <format><samplecharacteristics><rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate><width>1920</width><height>1080</height></samplecharacteristics></format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>wide_establishing.mp4</name><enabled>TRUE</enabled><duration>120</duration>
+            <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+            <start>0</start><end>120</end><in>48</in><out>168</out>
+            <pproTicksIn>10160640000000</pproTicksIn><pproTicksOut>35562240000000</pproTicksOut>
+            <file id="file-1"><name>wide_establishing.mp4</name>
+              <pathurl>file://localhost/Volumes/Footage/demo/wide_establishing.mp4</pathurl>
+              <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate><duration>2400</duration>
+              <media><video><samplecharacteristics><rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate><width>3840</width><height>2160</height></samplecharacteristics></video><audio><channelcount>2</channelcount></audio></media>
+            </file>
+          </clipitem>
+          <transitionitem><start>120</start><end>132</end><alignment>center</alignment></transitionitem>
+          <clipitem id="clipitem-2">
+            <name>mid_two_shot.mp4</name><enabled>TRUE</enabled><duration>144</duration>
+            <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+            <start>-1</start><end>264</end><in>0</in><out>144</out>
+            <file id="file-2"><name>mid_two_shot.mp4</name>
+              <pathurl>file://localhost/Volumes/Footage/demo/mid_two_shot.mp4</pathurl>
+              <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate><duration>1800</duration>
+              <media><video><samplecharacteristics><width>1920</width><height>1080</height></samplecharacteristics></video></media>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-3">
+            <name>closeup_reaction.mov</name><enabled>FALSE</enabled><duration>96</duration>
+            <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+            <start>264</start><end>360</end><in>12</in><out>108</out>
+            <file id="file-3"><name>closeup_reaction.mov</name>
+              <pathurl>file://localhost/Volumes/Footage/demo/closeup%20reaction.mov</pathurl>
+              <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate><duration>900</duration>
+              <media><video><samplecharacteristics><width>1920</width><height>1080</height></samplecharacteristics></video></media>
+            </file>
+          </clipitem>
+        </track>
+        <track>
+          <clipitem id="clipitem-4">
+            <name>wide_establishing.mp4</name><enabled>TRUE</enabled><duration>48</duration>
+            <rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate>
+            <start>300</start><end>348</end><in>0</in><out>48</out>
+            <file id="file-1"/>
+          </clipitem>
+        </track>
+      </video>
+      <audio><track><clipitem id="aclip-1"><name>dialog.wav</name></clipitem></track></audio>
+    </media>
+    <timecode><rate><timebase>24</timebase><ntsc>TRUE</ntsc></rate><string>00:00:00:00</string><frame>0</frame><displayformat>NDF</displayformat></timecode>
+  </sequence>
+</xmeml>

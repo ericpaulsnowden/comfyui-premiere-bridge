@@ -472,8 +472,8 @@ class PremiereSendResult:
                     {
                         "tooltip": (
                             "A video's frames as an IMAGE batch (an LTX/VAE-decode "
-                            "output). Assembled into a real video at `fps`, with "
-                            "`audio` muxed in when wired — unlike `image`, which "
+                            "output). Assembled into a real video at fps, with "
+                            "audio muxed in when wired — unlike image, which "
                             "sends a single still."
                         ),
                     },
@@ -482,8 +482,8 @@ class PremiereSendResult:
                     "AUDIO",
                     {
                         "tooltip": (
-                            "Soundtrack for `frames` (an LTX audio output). Only "
-                            "used when `frames` is wired — a VIDEO input already "
+                            "Soundtrack for frames (an LTX audio output). Only "
+                            "used when frames is wired — a VIDEO input already "
                             "carries its own audio."
                         ),
                     },
@@ -496,9 +496,9 @@ class PremiereSendResult:
                         "max": 120.0,
                         "step": 1.0,
                         "tooltip": (
-                            "Frame rate for the `frames` input — match the "
+                            "Frame rate for the frames input — match the "
                             "generation (LTX 2 = 24, classic LTXV = 25). Ignored "
-                            "unless `frames` is wired."
+                            "unless frames is wired."
                         ),
                     },
                 ),

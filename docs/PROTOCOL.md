@@ -456,7 +456,7 @@ category. It may be re-organised without breaking a saved graph.
   the Python input names and never passes through the frontend hook — one
   saved before v0.13.0 fails validation ("required input missing: segments")
   and must be re-exported from the reopened workflow. Accepted: the UI format
-  is what the owner and the bundled example use.
+  is what the owner and the bundled examples use.
 - The remaining internal `shot` vocabulary is the truly frozen surface: the
   class ids (`PremiereGetShot`, `PremiereIterateShots`, `PremiereShotFrame`)
   and §6.2's dict keys. Everything a user can read says **segment**.
@@ -624,12 +624,16 @@ Resolution rules (the §2-amending `premiere_results/` conventions):
 
 Outputs: `written_path` (STRING — the video's resolved path when both
 inputs are wired, else the single result's; for a linked-in-place video
-this is the ORIGINAL source path, the one Premiere imports) plus a UI text
+this is the ORIGINAL source path, the one Premiere imports) plus a `ui.text`
 summary: per file, `Sent to Premiere: <path>` or `Plugin not connected —
 import manually: <path>`, with any notes (temp-copy, trim, batched image)
-indented beneath. No plugin connected is NOT an error — §1's ethos:
-ComfyUI-only must work; the plugin is a better version, never the only
-version. `OUTPUT_NODE = True`.
+indented beneath. This `ui.text` payload is kept for API callers and run
+history — nothing in ComfyUI renders it (§10.6). What the user actually
+SEES is the on-node `✓/⚠ Premiere` status badge plus each file's basename,
+with the full path surfacing only in the toast (a warning toast on failure;
+§10.6, `web/cprb/send_result.js`). No plugin connected is NOT an error —
+§1's ethos: ComfyUI-only must work; the plugin is a better version, never
+the only version. `OUTPUT_NODE = True`.
 
 `IS_CHANGED` (since v0.9.7) returns this node's MONOTONIC failed-delivery
 count, so a push that never reached Premiere earns exactly ONE retry on the
@@ -673,8 +677,8 @@ never fails a finished run.
 §10 is the outbound half: ComfyUI pushes a finished result and the panel
 imports it. **M2 is the RETURN direction** — the panel hands ComfyUI
 something out of the open project, and a source node in the graph picks it
-up. Together the two halves are the round trip that
-`examples/premiere_roundtrip.json` demonstrates end to end.
+up. Together the two halves are the round trip that the bundled panel
+round-trip example in `examples/` demonstrates end to end.
 
 M2 adds **no new route and no new message type**: it reuses §10.1's
 `GET /cprb/ws`, adds one additive field to §10.2's `hello_ack`, and fixes

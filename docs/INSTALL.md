@@ -1,7 +1,7 @@
 # Installing comfyui-premiere-bridge
 
 See the [README](../README.md) for what each node does and which of them need
-the optional Premiere panel. Short version: **five of the eight nodes need
+the optional Premiere panel. Short version: **six of the eight nodes need
 nothing installed in Premiere**, so step 2 below is genuinely optional.
 
 ## Requirements

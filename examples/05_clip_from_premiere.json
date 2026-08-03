@@ -1,0 +1,336 @@
+{
+  "id": "cb8d1c00-0005-4000-8000-000000000005",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        -280
+      ],
+      "size": [
+        1360,
+        230
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Start here",
+      "properties": {},
+      "widgets_values": [
+        "# Clip from Premiere -- no export, no re-encode\n\n**Needs the ComfyUI Bridge panel running in Premiere.**\n\nIn Premiere, select a clip -- in the timeline or in the project panel -- then click **Clip -> ComfyUI** in the panel. Three things fill in on the node below: the clip's file path, and its in and out points in seconds. Then the workflow runs itself.\n\nNothing gets exported and nothing gets rendered. The panel simply tells ComfyUI where the footage already lives on disk, and ComfyUI opens it directly.\n\n**Success looks like:** the same clip turning up in your `ComfyUI Results` bin, plus a frame count in the preview box. Nothing has been changed yet -- that's the point. It's the smallest possible proof the wiring works, before you put real work in the middle."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 1,
+      "type": "PremiereClipSource",
+      "pos": [
+        60,
+        60
+      ],
+      "size": [
+        420,
+        230
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "path",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "start_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "end_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereClipSource"
+      },
+      "widgets_values": [
+        "",
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 5,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        390
+      ],
+      "size": [
+        500,
+        530
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Two ways out of one node",
+      "properties": {},
+      "widgets_values": [
+        "## Two ways out of one node\n\n**Clip from Premiere** hands you the same clip twice over, and which one you use depends on what you're doing.\n\n**segments** is the metadata list -- the exact same shape the Load Premiere Timeline nodes produce. So everything in `01_read_a_premiere_edit.json` works here too, only on a live selection instead of an exported file. Here it feeds Get Premiere Segment, which reports the clip's frame count.\n\n**video** is a ready-to-use VIDEO. Feed it a video model, a Save Video node, or send it straight back to Premiere as it is.\n\n`start_seconds` and `end_seconds` sitting at `0.0` mean \"the whole clip\". The panel fills them in for you when the thing you selected is trimmed.\n\n**To make this do something:** put a video workflow between the two nodes on the right, and change `label` so you can tell the result apart from the source.\n\nThe other outputs -- `path`, `start_seconds`, `end_seconds` -- come back out so you can pass them to nodes that want a filename or a time range."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 2,
+      "type": "PremiereGetShot",
+      "pos": [
+        580,
+        60
+      ],
+      "size": [
+        380,
+        220
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "segments",
+          "type": "CPRB_SEGMENT_LIST",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "path",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "duration_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "in_seconds",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "frame_count",
+          "type": "INT",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "in_frame",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "name",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereGetShot"
+      },
+      "widgets_values": [
+        0
+      ]
+    },
+    {
+      "id": 3,
+      "type": "PreviewAny",
+      "pos": [
+        1000,
+        60
+      ],
+      "size": [
+        370,
+        140
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 2
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "title": "how many frames you got"
+    },
+    {
+      "id": 4,
+      "type": "PremiereSendResult",
+      "pos": [
+        580,
+        390
+      ],
+      "size": [
+        400,
+        260
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "shape": 7,
+          "type": "VIDEO",
+          "link": 3
+        },
+        {
+          "name": "image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "written_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PremiereSendResult"
+      },
+      "widgets_values": [
+        "clip round trip",
+        "ComfyUI Results",
+        "Default",
+        false,
+        24.0
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "CPRB_SEGMENT_LIST"
+    ],
+    [
+      2,
+      2,
+      3,
+      3,
+      0,
+      "INT"
+    ],
+    [
+      3,
+      1,
+      4,
+      4,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "Premiere hands you the clip",
+      "bounding": [
+        40,
+        10,
+        480,
+        300
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "Read it as data",
+      "bounding": [
+        560,
+        10,
+        840,
+        300
+      ],
+      "color": "#8A8",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "...or send it straight back",
+      "bounding": [
+        560,
+        340,
+        840,
+        340
+      ],
+      "color": "#b58b2a",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8,
+      "offset": [
+        60,
+        320
+      ]
+    }
+  },
+  "version": 0.4
+}
