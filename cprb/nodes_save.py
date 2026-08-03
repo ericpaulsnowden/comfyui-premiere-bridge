@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import Any
 
 from . import timeline_write
-from .context import BridgeContext, output_dir_override_is_rejected, sanitize_name
+from .context import (
+    BridgeContext,
+    _atomic_write,
+    output_dir_override_is_rejected,
+    sanitize_name,
+)
 
 logger = logging.getLogger("cprb")
 
@@ -503,13 +508,14 @@ class PremiereSaveTimeline:
             )
 
         xml_path = out_dir / f"{sanitize_name(sequence_name)}.xml"
-        xml_path.write_text(timeline_write.build_xmeml(sequence_name, fps, clips), encoding="utf-8")
+        xml_text = timeline_write.build_xmeml(sequence_name, fps, clips)
+        _atomic_write(xml_path, xml_text, encoding="utf-8")
         written.append(str(xml_path))
 
         if write_edl:
             edl_path = out_dir / f"{sanitize_name(sequence_name)}.edl"
             edl_text = timeline_write.build_edl(sequence_name, fps, clips)
-            edl_path.write_text(edl_text, encoding="utf-8")
+            _atomic_write(edl_path, edl_text, encoding="utf-8")
             written.append(str(edl_path))
 
         if write_otio:
@@ -523,7 +529,7 @@ class PremiereSaveTimeline:
                 )
             else:
                 otio_path = out_dir / f"{sanitize_name(sequence_name)}.otio"
-                otio_path.write_text(otio_text, encoding="utf-8")
+                _atomic_write(otio_path, otio_text, encoding="utf-8")
                 written.append(str(otio_path))
 
         summary = [f"Wrote {len(written)} file(s):"]

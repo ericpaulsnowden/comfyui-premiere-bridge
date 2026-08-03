@@ -10,7 +10,9 @@ fake ones over ``tmp_path``. Same pattern as comfyui-photoshop-bridge's
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +64,46 @@ def output_dir_override_is_rejected(output_dir: str) -> bool:
     for a valid one.
     """
     return bool((output_dir or "").strip()) and not output_dir_override_is_valid(output_dir)
+
+
+def _atomic_write(path: Path, data: str | bytes, encoding: str | None = "utf-8") -> None:
+    """Write *data* to *path* without ever exposing a partially-written file.
+
+    A plain ``Path.write_text``/``write_bytes`` opens its destination for
+    writing IMMEDIATELY, truncating any existing file before the new content
+    lands -- so a crash mid-write, or a concurrent reader (Premiere importing
+    a timeline the moment it appears on disk, the §7.2 route listing a
+    just-created folder), can observe a torn, half-written, or empty file.
+    This instead writes to a fresh, uniquely-named temp file in the SAME
+    directory as *path* (:func:`tempfile.mkstemp` there rather than in any
+    system temp location, guaranteeing the same filesystem so the final step
+    is a true atomic rename, never a cross-filesystem copy) and only
+    ``os.replace()``s it onto *path* once the write has fully returned. Any
+    exception along the way leaves a pre-existing *path* byte-for-byte
+    untouched, removes the temp file rather than leaving it behind, and
+    propagates -- never swallowed. Same shape as comfyui-photoshop-bridge's
+    ``cpsb.compose_psd._atomic_save``.
+
+    Content semantics are IDENTICAL to the ``write_text``/``write_bytes``
+    calls this replaces, because the temp file is written with those very
+    same pathlib methods: ``str`` data goes through ``write_text`` with
+    *encoding* (text mode, so default platform newline translation is
+    preserved too); ``bytes`` data goes through ``write_bytes`` verbatim,
+    with *encoding* ignored.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        if isinstance(data, bytes):
+            tmp_path.write_bytes(data)
+        else:
+            tmp_path.write_text(data, encoding=encoding)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 @dataclass
