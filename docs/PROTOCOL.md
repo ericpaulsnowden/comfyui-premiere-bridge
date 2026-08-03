@@ -325,11 +325,15 @@ always calls `/api/cprb/...`.
 
 **§7.1 Host-machine posture.** The picker and reveal routes below act on
 the SERVER's filesystem, so they are **loopback-only**: a request whose
-`request.remote` isn't a loopback address (or that carries an
-`X-Forwarded-For` header — a proxy hop hides the real origin) gets
-`403 {"error": ...}`. A remote browser (the Mac viewing the PC's ComfyUI)
-therefore hides those buttons and types paths by hand; nothing else about
-the nodes changes. Same rule and rationale as EPSNodes' FORMAT.md §2.
+`request.remote` isn't an address this machine itself owns — loopback, or
+one of the machine's own LAN addresses (a browser ON THE HOST reaching
+ComfyUI via `--listen` + `http://192.168.x.x:8188`; ownership decided by a
+throwaway UDP bind to the peer address, 2026-08-02, same-machine-via-LAN
+fix ported from EPSNodes/cpsb) — or that carries an `X-Forwarded-For`
+header (a proxy hop hides the real origin) gets `403 {"error": ...}`. A
+remote browser (the Mac viewing the PC's ComfyUI) therefore hides those
+buttons and types paths by hand; nothing else about the nodes changes.
+Same rule and rationale as EPSNodes' FORMAT.md §2.
 
 **§7.2 Routes.** JSON in/out; errors are `{"error": "<human message>"}`.
 

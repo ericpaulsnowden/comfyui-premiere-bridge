@@ -28,6 +28,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 import string
 import subprocess
 import sys
@@ -85,6 +86,21 @@ def request_is_loopback(request: web.Request) -> bool:
     hop hides the real origin, so it gets the restricted tier. ``remote``
     being absent (unix sockets, aiohttp test clients) counts as loopback:
     both mean "not a foreign machine".
+
+    **Same-machine-via-LAN-address counts as local** (ported 2026-08-02 from
+    the CANONICAL copy of this function pair, comfyui-epsnodes'
+    ``lora_library/routes.py`` — itself cpsb/locality.py's 2026-07-30 fix;
+    keep this copy in lockstep with that one): a literal ``is_loopback``
+    check classifies a browser on the HOST machine that reaches ComfyUI via
+    the machine's own LAN address (``--listen`` +
+    ``http://192.168.x.x:8188``) as REMOTE — hiding §7.1's Browse…/reveal
+    affordances from the very machine whose filesystem they act on. A
+    hostname can't answer "is this browser on my machine" (the same URL is
+    used from both machines); the OS can: a process can only ``bind()`` a
+    socket to an address this machine owns, so a throwaway UDP bind to the
+    PEER address is a deterministic ownership test. Loopback stays the fast
+    path; forwarded requests stay remote (the peer is the proxy, not the
+    client).
     """
     if "X-Forwarded-For" in request.headers:
         return False
@@ -92,9 +108,50 @@ def request_is_loopback(request: web.Request) -> bool:
     if remote is None:
         return True
     try:
-        return ipaddress.ip_address(remote).is_loopback
+        if ipaddress.ip_address(remote.partition("%")[0]).is_loopback:
+            return True
     except ValueError:
         return False
+    return _machine_owns_address(remote)
+
+
+def _machine_owns_address(address: str) -> bool:
+    """Throwaway UDP bind test: True only if this machine owns *address*.
+
+    Ported verbatim from comfyui-epsnodes' ``lora_library/routes.py`` (the
+    canonical copy; itself cpsb/locality.py's ``_can_bind``, adapted):
+    binding to any address the machine does not own fails with ``OSError``
+    on every platform (Windows surfaces ``WSAEADDRNOTAVAIL`` as a plain
+    ``OSError`` too, so no branching). An IPv6 zone id (``fe80::1%en0``) is
+    passed as the scoped 4-tuple's ``scope_id`` — folded into the address
+    string it is rejected. IPv4-mapped IPv6 peers (``::ffff:192.0.2.7``,
+    from a dual-stack socket) are reduced to plain IPv4 first so the bind
+    uses the right family.
+    """
+    lowered = address.lower()
+    if lowered.startswith("::ffff:") and "." in address:
+        address = address[7:]
+    bare, _, zone = address.partition("%")
+    family = socket.AF_INET6 if ":" in bare else socket.AF_INET
+    scope_id = 0
+    if zone:
+        try:
+            scope_id = int(zone)
+        except ValueError:
+            try:
+                scope_id = socket.if_nametoindex(zone)
+            except OSError:
+                return False
+    sock_address = (bare, 0, 0, scope_id) if family == socket.AF_INET6 else (bare, 0)
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    try:
+        sock.bind(sock_address)
+    except OSError:
+        return False
+    else:
+        return True
+    finally:
+        sock.close()
 
 
 def error_response(status: int, message: str) -> web.Response:
