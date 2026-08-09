@@ -1,8 +1,9 @@
 /**
  * @file Entry point for the comfyui-premiere-bridge frontend extension
  * (PROTOCOL.md §7). Tier 1's only graph behavior is the §7.3 file bar
- * (Browse…/Open folder/Open output folder) on PremiereLoadTimeline/
- * PremiereSaveTimeline nodes, attached from `nodeCreated`; everything else
+ * (Browse… and Open folder, the same pair on both PremiereLoadTimeline/
+ * PremiereSaveTimeline nodes since 2026-07-20), attached from
+ * `nodeCreated`; everything else
  * is the About badge, the version-mismatch settings section, and the two
  * websocket-event relays registered in `setup()` (§10.6's send-to-Premiere
  * toasts and §11's export_ready → source-node relay), matching the cpsb

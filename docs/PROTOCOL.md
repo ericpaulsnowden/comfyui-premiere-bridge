@@ -241,8 +241,9 @@ nodes → per-shot processing ("restyle my whole edit").
 - Widget: `file_path` (STRING — absolute path of a Premiere-exported
   `.xml`).
 - Outputs: `segments` (custom type `CPRB_SEGMENT_LIST`), `count` (INT),
-  `summary` (STRING — one line per segment: index, name, source path, in/out
-  timecode) — wire `summary` into a Show Text node for a free segment sheet.
+  `summary` (STRING — one line per segment: index, name, source path, in–out
+  source frame range @ source fps) — wire `summary` into a Show Text node
+  for a free segment sheet.
 - Parses EVERY `clipitem` on every video track of the first `<sequence>`,
   in ascending `start` order (track 1 first on ties). Per shot it captures:
   `name`, `path` (decoded §4.3 pathurl; percent-decoding + `file://` and
@@ -323,8 +324,9 @@ Routes register on `PromptServer.instance.routes` (never the app directly)
 so ComfyUI's `/api` prefix mirror serves them — the frontend's `fetchApi`
 always calls `/api/cprb/...`.
 
-**§7.1 Host-machine posture.** The picker and reveal routes below act on
-the SERVER's filesystem, so they are **loopback-only**: a request whose
+**§7.1 Host-machine posture.** The picker, reveal, and timeline-dir routes
+below act on the SERVER's filesystem, so they are **loopback-only**: a
+request whose
 `request.remote` isn't an address this machine itself owns — loopback, or
 one of the machine's own LAN addresses (a browser ON THE HOST reaching
 ComfyUI via `--listen` + `http://192.168.x.x:8188`; ownership decided by a
@@ -336,6 +338,12 @@ buttons and types paths by hand; nothing else about the nodes changes.
 Same rule and rationale as EPSNodes' FORMAT.md §2.
 
 **§7.2 Routes.** JSON in/out; errors are `{"error": "<human message>"}`.
+The filesystem work behind `fs/list`, `open_folder`, and `timeline_dir`
+runs off the event loop, bounded to **5 s** (2026-08-08 — these routes take
+arbitrary user paths, and a sleeping NAS/UNC share used to stall ALL of
+ComfyUI for the SMB timeout): on timeout `fs/list`/`open_folder` answer
+400 naming the slow path, and `timeline_dir` answers with `exists: null`
+("unverified", never "missing") while still resolving `dir`.
 
 | Route | → |
 |---|---|
@@ -343,7 +351,7 @@ Same rule and rationale as EPSNodes' FORMAT.md §2.
 | `GET /cprb/config` | `{"is_local": bool, "output_dir": <abs>, "input_dir": <abs>}` — `is_local` is the §7.1 verdict for THIS caller (gates the buttons); the dirs seed the picker's starting location |
 | `GET /cprb/fs/list?dir=&ext=` | **loopback-only** (`FS_LIST_LOCAL_ONLY=True`). Conforms to the cross-pack **`../../STANDARD-fs-browse.md`** contract (shared with cpsb + epsnodes; v0.5.1). Empty/missing `dir` ⇒ `output_dir`. `dir="ROOTS"` ⇒ the labeled top level: **"ComfyUI Output"** + **"Home"** + platform tail (Windows drives `C:\`/`D:\`/`U:\`…, or macOS `/Volumes/*`). `ext` = a comma-separated allowlist (default `.xml`; case-insensitive). → `{"dir", "parent" (abs / "ROOTS" / null), "sep", "dirs":[{name}], "files":[{name,size,mtime}], "truncated"}` — **names-only** entries (client joins with `dir`+`sep`; ROOTS entries also carry an absolute `path`), case-insensitively sorted, dotfiles + stat-failures skipped, 500-entry cap ⇒ `truncated:true`. A directory at a drive root reports `parent:"ROOTS"` so the picker can climb to the top level (the 2026-07-19 "stuck at top of C:\" fix); a UNC path lists normally, its share root `parent:null`; non-absolute `dir` (other than `ROOTS`) ⇒ 400; unreadable ⇒ 400 |
 | `POST /cprb/open_folder` `{"path"}` | **loopback-only.** Reveals *path* in the OS file manager ON THE SERVER MACHINE (Explorer/Finder): a file reveals its parent folder, a directory reveals itself. Missing ⇒ 404; spawn failure ⇒ 500; `{"ok": true}` |
-| `GET /cprb/timeline_dir?sequence_name=&output_dir=` | `{"dir": <abs>, "exists": bool}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name`. `output_dir` (2026-07-20, §3.2) is optional and mirrors the node's own widget of the same name — passing it resolves the SAME effective folder `PremiereSaveTimeline` would write to with that override; omitted/blank behaves exactly as before it existed. Never 400s on a non-absolute `output_dir` — it is silently treated as blank (the node is the one that surfaces the "rejected" warning; this route only ever mirrors what the node would actually do) |
+| `GET /cprb/timeline_dir?sequence_name=&output_dir=` | **loopback-only** (2026-08-08 — an absolute `output_dir` makes the `exists` probe read host filesystem state at an arbitrary client path, the exact §7.1 territory; the route's only frontend caller, Save's "Open folder", is itself hidden for remote viewers). `{"dir": <abs>, "exists": bool\|null}` — the §2 output folder this `sequence_name` resolves to, computed server-side so the frontend never re-implements `sanitize_name` (`exists: null` = the probe timed out, see the 5 s bound above). `output_dir` (2026-07-20, §3.2) is optional and mirrors the node's own widget of the same name — passing it resolves the SAME effective folder `PremiereSaveTimeline` would write to with that override; omitted/blank behaves exactly as before it existed. Never 400s on a non-absolute `output_dir` — it is silently treated as blank (the node is the one that surfaces the "rejected" warning; this route only ever mirrors what the node would actually do) |
 | `GET /cprb/ws` | websocket upgrade — the Tier 2 plugin connection. Not JSON-in/JSON-out like the rows above; the full message contract lives in §10 |
 
 **§7.3 Frontend.** `web/cprb.js`: one
@@ -470,6 +478,8 @@ category. It may be re-organised without breaking a saved graph.
 - S5: linked-audio clipitems (v1.1 feature, needs S1 first).
 - S6: Premiere UXP panel — plain `ws://` permission + EncoderManager range
   semantics (Tier 2 gate; mirrors the cpsb spike discipline).
+- S7: frame export — `exportSequenceFrame` produces a real still from the
+  playhead (THE M2 gate; S7-b/S7-c PASSED, owner 2026-07-24/26).
 
 ## §10 Tier 2 — plugin websocket (M1)
 
@@ -527,8 +537,8 @@ once per resolved file:
 | `path` | ABSOLUTE host-filesystem path of the media to import (§10.1 posture) |
 | `label` | clip name for the imported item; empty = keep the filename |
 | `bin_name` | project-panel bin to import into (plugin creates it if missing; node default `ComfyUI Results`) |
-| `color_label` | ALWAYS present; `""` until a later node version adds the widget — the plugin skips absent/EMPTY values |
-| `insert_at_playhead` | ALWAYS present; `false` until a later node version adds the widget — same skip-when-unset rule |
+| `color_label` | ALWAYS present; the widget's choice (since v0.9.2), sent as `""` for `Default` — the plugin skips absent/EMPTY values |
+| `insert_at_playhead` | ALWAYS present; the widget's boolean (since v0.9.3) — `false` means the plugin skips the sequence drop |
 | `sent_ts` | server Unix time the push was sent (float seconds) |
 
 Delivery contract: `push_result` is called on ComfyUI's prompt WORKER
@@ -563,17 +573,21 @@ Inputs (ALL optional — `required` is empty):
   file this node writes (`cprb.context.sanitize_name`, empty → `result`).
 - `bin_name` (STRING, default `"ComfyUI Results"`).
 - `color_label` (COMBO, since v0.9.2, APPENDED after `bin_name` — widgets
-  are position-restored, §8): `None` default (sent as `""` — the plugin's
-  skip value; there is no "None" member in Premiere's label enum) or one of
+  are position-restored, §8): `Default` default (renamed from v0.9.2's
+  `None`, owner correction 2026-07-24 — "there isn't a way to not have a
+  color"; a saved `None` still means skip via the legacy alias; sent as
+  `""` — the plugin's skip value) or one of
   the 15 label-color names + `yellow`, passed through verbatim for the
   plugin's Constants-enum/name-map lookup.
 - `insert_at_playhead` (BOOLEAN, since v0.9.3, appended after
   `color_label`): OFF by default — results only land in the bin. On, the
   plugin also overwrites the clip onto the ACTIVE sequence at the playhead
-  on the track above (one labeled undo step; skipped with a logged line
-  when no sequence is open or the track count is unreadable — it never
-  guesses a track). The Premiere-side action is VERIFY-flagged pending the
-  owner's live run.
+  on the topmost EXISTING video track — an overwrite, so an exactly
+  overlapping clip already there is replaced (one labeled undo step;
+  skipped with a logged line when no sequence is open or the track count
+  is unreadable — it never guesses a track). Proven live on Premiere 26.3
+  (SPIKES.md, owner 2026-07-25: raw ProjectItem +
+  `createOverwriteItemAction`, read-back confirmed).
 - `frames` (IMAGE, since v0.14.0, appended after `insert_at_playhead`) —
   a video's frames as an IMAGE batch, for models that output frames and
   audio SEPARATELY instead of a VIDEO (LTX 2 and friends). Assembled with
@@ -625,8 +639,11 @@ Resolution rules (the §2-amending `premiere_results/` conventions):
 Outputs: `written_path` (STRING — the video's resolved path when both
 inputs are wired, else the single result's; for a linked-in-place video
 this is the ORIGINAL source path, the one Premiere imports) plus a `ui.text`
-summary: per file, `Sent to Premiere: <path>` or `Plugin not connected —
-import manually: <path>`, with any notes (temp-copy, trim, batched image)
+summary: per file, `Sent to Premiere: <path>` or `NOT sent (no panel
+connected, or the send failed) — import manually: <path>` (the honest
+superset — `push_result` also returns False on a send timeout or a
+mid-send socket death, 2026-08-08), with any notes (temp-copy, trim,
+batched image)
 indented beneath. This `ui.text` payload is kept for API callers and run
 history — nothing in ComfyUI renders it (§10.6). What the user actually
 SEES is the on-node `✓/⚠ Premiere` status badge plus each file's basename,

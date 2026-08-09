@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -249,6 +250,34 @@ async def test_fs_list_unreadable_dir_is_400(client, tmp_path: Path) -> None:
     assert response.status == 400
 
 
+# --------------------------------------------- §7.2 slow-share timeout bound
+#
+# 2026-08-08: the fs routes take arbitrary user paths (the picker's path bar
+# literally suggests \\server\share) and their blocking work used to run ON
+# the aiohttp event loop — a sleeping share stalled ALL of ComfyUI for the
+# SMB timeout. The work now runs on a worker thread bounded by
+# `_FS_IO_TIMEOUT_SECONDS`, so a stall costs the one request a clean answer
+# (400, or `exists: null` for timeline_dir), never the loop. Each test
+# drives the route's blocking seam into a sleep far past a tiny patched
+# bound; the seam returns normally (no raise) so the abandoned worker
+# thread dies quietly.
+
+
+async def test_fs_list_slow_share_is_400_not_a_stall(
+    client, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(cprb_routes, "_FS_IO_TIMEOUT_SECONDS", 0.05)
+
+    def stall(directory: Path, extensions: tuple) -> dict:
+        time.sleep(0.3)
+        return {"dirs": [], "files": [], "truncated": False}
+
+    monkeypatch.setattr(cprb_routes, "_list_directory_entries", stall)
+    response = await client.get("/cprb/fs/list", params={"dir": str(tmp_path)})
+    assert response.status == 400
+    assert "longer than" in (await response.json())["error"]
+
+
 # ------------------------------------------------ fs/list: ROOTS & drive roots
 #
 # 2026-07-19 fix: the §7.2 picker could reach the top of C:\ but no further.
@@ -419,6 +448,27 @@ async def test_open_folder_spawn_failure_is_500_with_the_reason(
     assert "no file manager here" in (await response.json())["error"]
 
 
+async def test_open_folder_slow_share_is_400_and_never_reveals(
+    client, context: BridgeContext, monkeypatch
+) -> None:
+    # Same §7.2 timeout bound as fs/list (see that section's header comment):
+    # the is_dir probes hit whatever path the client sent, dead shares
+    # included, and a timed-out check must not go on to reveal anything.
+    monkeypatch.setattr(cprb_routes, "_FS_IO_TIMEOUT_SECONDS", 0.05)
+    revealed = []
+    monkeypatch.setattr(cprb_routes, "_reveal_folder", revealed.append)
+
+    def stall(path: Path) -> Path:
+        time.sleep(0.3)
+        return path
+
+    monkeypatch.setattr(cprb_routes, "_existing_reveal_folder", stall)
+    response = await client.post("/cprb/open_folder", json={"path": str(context.output_dir)})
+    assert response.status == 400
+    assert "longer than" in (await response.json())["error"]
+    assert revealed == []
+
+
 # ------------------------------------------------------------ timeline_dir
 
 
@@ -443,6 +493,38 @@ async def test_timeline_dir_reports_exists_once_written(
         await client.get("/cprb/timeline_dir", params={"sequence_name": "My Edit"})
     ).json()
     assert data["exists"] is True
+
+
+async def test_timeline_dir_is_loopback_only(client) -> None:
+    # 2026-08-08: an absolute `output_dir` points the exists probe at any
+    # host path a remote client chooses — §7.1 territory — so the route now
+    # carries the same 403 gate as its fs/list + open_folder siblings. (Its
+    # only frontend caller, Save's "Open folder" button, is itself hidden
+    # for remote viewers, so nothing legitimate loses access.)
+    response = await client.get(
+        "/cprb/timeline_dir", params={"sequence_name": "X"}, headers=REMOTE_HEADERS
+    )
+    assert response.status == 403
+
+
+async def test_timeline_dir_slow_probe_reports_exists_null(
+    client, context: BridgeContext, monkeypatch
+) -> None:
+    # §7.2 timeout bound: `dir` still resolves (pure path math), but the
+    # exists verdict is `null` — "unverified", never "missing", so the
+    # frontend won't claim "Not created yet" about a folder it couldn't see.
+    monkeypatch.setattr(cprb_routes, "_FS_IO_TIMEOUT_SECONDS", 0.05)
+
+    def stall(directory: Path) -> bool:
+        time.sleep(0.3)
+        return True
+
+    monkeypatch.setattr(cprb_routes, "_dir_exists", stall)
+    data = await (
+        await client.get("/cprb/timeline_dir", params={"sequence_name": "Slow"})
+    ).json()
+    assert data["exists"] is None
+    assert data["dir"] == str(context.output_dir / "premiere_timelines" / "Slow")
 
 
 async def test_timeline_dir_sanitizes_like_the_writer(

@@ -68,12 +68,12 @@ def extract_frame(path: str, in_seconds: float) -> torch.Tensor:
     try:
         container = av.open(path)
     except Exception as exc:  # any av/ffmpeg open failure becomes a ValueError.
-        raise ValueError(f"Get Shot Frame: could not open media file: {path} ({exc})") from exc
+        raise ValueError(f"Get Premiere Segment Frame: could not open media file: {path} ({exc})") from exc
 
     try:
         video_streams = container.streams.video
         if not video_streams:
-            raise ValueError(f"Get Shot Frame: no video stream found in: {path}")
+            raise ValueError(f"Get Premiere Segment Frame: no video stream found in: {path}")
         stream = video_streams[0]
 
         target_ts = max(in_seconds, 0.0) / stream.time_base
@@ -86,13 +86,13 @@ def extract_frame(path: str, in_seconds: float) -> torch.Tensor:
             if candidate.pts is not None and candidate.pts >= target_ts:
                 break
         if frame is None:
-            raise ValueError(f"Get Shot Frame: could not decode any frame from: {path}")
+            raise ValueError(f"Get Premiere Segment Frame: could not decode any frame from: {path}")
 
         array = frame.to_ndarray(format="rgb24")  # HWC, uint8, RGB.
     except ValueError:
         raise
     except Exception as exc:  # any other av/ffmpeg decode failure becomes a ValueError.
-        raise ValueError(f"Get Shot Frame: could not decode media file: {path} ({exc})") from exc
+        raise ValueError(f"Get Premiere Segment Frame: could not decode media file: {path} ({exc})") from exc
     finally:
         container.close()
 

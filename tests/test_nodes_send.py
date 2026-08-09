@@ -198,7 +198,10 @@ def test_execute_image_writes_png_and_says_import_manually_without_a_plugin(
         assert img.getpixel((0, 0)) == (0, 0, 0)
 
     summary = "\n".join(result["ui"]["text"])
-    assert f"Plugin not connected — import manually: {written}" in summary
+    assert (
+        f"NOT sent (no panel connected, or the send failed) — import manually: {written}"
+        in summary
+    )
     assert "Sent to Premiere" not in summary
 
 

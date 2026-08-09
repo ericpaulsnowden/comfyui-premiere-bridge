@@ -50,34 +50,70 @@ export function getAutoRun() {
   }
 }
 
+/** In-flight `/cprb/version` fetch, so overlapping callers (setup racing a
+ * quickly-opened settings dialog) de-dupe onto one request — and therefore
+ * at most one mismatch toast. */
+let versionFetchPromise = null
+
+/** Fetches the backend version, remembers it, and fires the mismatch toast
+ * on the FIRST successful read — wherever that happens (setup, or a later
+ * settings-dialog open via versionRow()'s recovery path). Rejects on an
+ * unreachable backend; callers decide how loudly to say so. */
+function fetchBackendVersion() {
+  if (!versionFetchPromise) {
+    versionFetchPromise = api
+      .getJson('/cprb/version')
+      .then((data) => {
+        backendVersion = data.version
+        if (backendVersion && backendVersion !== api.FRONTEND_VERSION) {
+          app.extensionManager?.toast?.add?.({
+            severity: 'warn',
+            summary: 'Premiere Bridge version mismatch',
+            detail:
+              `backend v${backendVersion}, frontend v${api.FRONTEND_VERSION} — if you ` +
+              'just updated, restart the ComfyUI server (backend) or hard-refresh ' +
+              'the browser (frontend).',
+            life: 8000
+          })
+        }
+      })
+      .finally(() => {
+        versionFetchPromise = null
+      })
+  }
+  return versionFetchPromise
+}
+
 /** One-time setup: fetch the backend version; toast on mismatch. */
 export async function initSettings() {
   try {
-    const data = await api.getJson('/cprb/version')
-    backendVersion = data.version
+    await fetchBackendVersion()
   } catch (error) {
     api.warn('backend version unreachable', error)
-    return
-  }
-  if (backendVersion && backendVersion !== api.FRONTEND_VERSION) {
-    app.extensionManager?.toast?.add?.({
-      severity: 'warn',
-      summary: 'Premiere Bridge version mismatch',
-      detail:
-        `backend v${backendVersion}, frontend v${api.FRONTEND_VERSION} — if you ` +
-        'just updated, restart the ComfyUI server (backend) or hard-refresh ' +
-        'the browser (frontend).',
-      life: 8000
-    })
   }
 }
 
 function versionRow() {
   const el = document.createElement('div')
   el.style.opacity = '0.85'
+  renderVersionRow(el)
+  if (backendVersion === null) {
+    // Recovery window (2026-08-08 audit): a backend that was restarting
+    // during page load used to leave this row saying "unreachable" for the
+    // whole session AND permanently swallow the mismatch toast — the exact
+    // restart window the drift surface exists to cover. Opening the
+    // settings dialog is the natural moment to look again; on success the
+    // row updates in place and fetchBackendVersion() fires the toast.
+    fetchBackendVersion()
+      .then(() => renderVersionRow(el))
+      .catch((error) => api.warn('backend version still unreachable', error))
+  }
+  return el
+}
+
+function renderVersionRow(el) {
   el.textContent = backendVersion
     ? `backend v${backendVersion} · frontend v${api.FRONTEND_VERSION}` +
       (backendVersion === api.FRONTEND_VERSION ? '' : '  ⚠ mismatch — restart server or hard-refresh')
     : `frontend v${api.FRONTEND_VERSION} · backend unreachable`
-  return el
 }

@@ -337,9 +337,11 @@ def _resolve_image_file(image: Any, results_dir: Path, label: str) -> tuple[Path
 class PremiereSendResult:
     """Sends a finished result to Premiere's project panel (PROTOCOL.md §10.5).
 
-    Wire ``video`` (VIDEO) and/or ``image`` (IMAGE) -- at least one, both
-    allowed (both are pushed in one run; video is the primary
-    ``written_path``). Each input resolves to one durable on-disk file
+    Wire ``video`` (VIDEO), ``image`` (IMAGE), and/or ``frames`` (an IMAGE
+    batch, assembled with ``audio``/``fps`` into a real video -- the
+    v0.14.0 LTX shape) -- at least one of the three; everything wired is
+    pushed in one run (video is the primary ``written_path``). Each input
+    resolves to one durable on-disk file
     (:func:`_resolve_video_file` / :func:`_resolve_image_file`: link an
     existing video source in place, copy it out of ComfyUI's temp dir, or
     write into ``premiere_results/`` under a collision-free name) and is
@@ -353,9 +355,9 @@ class PremiereSendResult:
     ``label`` names both the pushed clip (empty = the plugin keeps the
     filename) and the stem of any file this node writes; ``bin_name`` is
     the Premiere bin the plugin imports into (default "ComfyUI Results").
-    Later versions add ``color_label``/``insert_at_playhead`` widgets --
-    the §10.3 message already carries both fields (empty/False), so those
-    land as two ``execute`` kwargs with no protocol change.
+    ``color_label``/``insert_at_playhead`` are real widgets (since
+    v0.9.2/v0.9.3); their live values travel in the §10.3 message, where
+    empty/``False`` means the plugin skips that option.
 
     ``OUTPUT_NODE = True``: this node exists for its side effects. Returns
     ``written_path`` (the video's resolved path when both inputs are wired,
@@ -384,12 +386,12 @@ class PremiereSendResult:
     FUNCTION = "execute"
     OUTPUT_NODE = True
     DESCRIPTION = (
-        "Sends a finished video and/or image result to Premiere — imported straight into a "
-        "bin in your open project, or dropped onto the active sequence at the playhead if "
-        "you turn that on. Works without the plugin too: the result is always written to "
-        "disk first, and if no Premiere panel is connected, this node's summary says where "
-        "to import it from by hand. Wire a video and/or an image (at least one); when both "
-        "are wired, both are sent in one run."
+        "Sends a finished video, image, or frames-batch result to Premiere — imported "
+        "straight into a bin in your open project, or dropped onto the active sequence at "
+        "the playhead if you turn that on. Works without the plugin too: the result is "
+        "always written to disk first, and if no Premiere panel is connected, this node's "
+        "summary says where to import it from by hand. Wire a video, an image, and/or a "
+        "frames batch (at least one); everything wired is sent in one run."
     )
 
     @classmethod
@@ -456,9 +458,10 @@ class PremiereSendResult:
                     {
                         "default": False,
                         "tooltip": (
-                            "Also drop the imported clip onto the active sequence "
-                            "at the playhead, on the track above (one undo step). "
-                            "Off = the result only lands in the bin."
+                            "Also drop the imported clip onto the topmost video "
+                            "track at the playhead — an overwrite, so content "
+                            "already there at that spot is replaced (one undo "
+                            "step). Off = the result only lands in the bin."
                         ),
                     },
                 ),
@@ -618,7 +621,14 @@ class PremiereSendResult:
             if pushed:
                 lines.append(f"Sent to Premiere: {path}")
             else:
-                lines.append(f"Plugin not connected — import manually: {path}")
+                # Honest superset (2026-08-08 audit): push_result also
+                # returns False on a send timeout or a socket that died
+                # mid-send — a user whose panel shows Connected must not be
+                # told it isn't.
+                lines.append(
+                    f"NOT sent (no panel connected, or the send failed) — "
+                    f"import manually: {path}"
+                )
             lines.extend(f"  {note}" for note in notes)
             sent.append({"path": str(path), "pushed": bool(pushed)})
 

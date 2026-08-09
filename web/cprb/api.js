@@ -6,7 +6,7 @@
  * server's `error` field (or `HTTP <status>` when the body wasn't JSON, or
  * had no `error` field), plus `.status` (the HTTP status code) and `.data`
  * (the parsed body, if any) for callers that need more than the message —
- * e.g. `PremiereSaveTimeline`'s "Open output folder" button reads
+ * e.g. `PremiereSaveTimeline`'s "Open folder" button reads
  * `.data.exists` off a *successful* `/cprb/timeline_dir` response, not off
  * an error, but the same `unwrap` return value shape is what makes both
  * paths uniform.

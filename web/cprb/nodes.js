@@ -495,12 +495,24 @@ function getConfig() {
   return fetchConfig()
 }
 
+/** How long after a failed initial `/cprb/config` fetch the ONE retry
+ * waits — long enough for a restarting backend or a LAN hiccup to clear,
+ * short enough that a genuinely remote tab converges within its first
+ * minute rather than never. */
+const GATING_RETRY_DELAY_MS = 5000
+
 /**
  * Refreshes `state.isLocal` from (cached) `/cprb/config` and applies it to
  * the bar's buttons. Never throws: a failed fetch is logged and leaves
  * `state.isLocal` whatever it already was (`null`/unknown reads as "local"
  * everywhere this is checked with `=== false`) — this fails OPEN rather
- * than hiding the buttons over a network hiccup.
+ * than hiding the buttons over a network hiccup. But not forever-silent
+ * (2026-08-08 audit): the same branch fires for a genuinely REMOTE viewer
+ * over a flaky LAN, which used to leave the host-only buttons up all
+ * session with every click dead-ending in a 403 — so a failed fetch now
+ * schedules ONE retry (getConfig()'s cache de-dupes concurrent retries
+ * across nodes), and the 403s themselves are adopted as the verdict too
+ * (adoptRemoteVerdict below).
  */
 async function refreshGating(state) {
   let config
@@ -508,10 +520,34 @@ async function refreshGating(state) {
     config = await getConfig()
   } catch (error) {
     api.warn('could not load /cprb/config; treating this node as local', error)
+    if (!state.gatingRetried) {
+      state.gatingRetried = true
+      setTimeout(() => {
+        refreshGating(state).catch((retryError) =>
+          api.warn('config retry failed; still treating this node as local', retryError)
+        )
+      }, GATING_RETRY_DELAY_MS)
+    }
     return
   }
   state.isLocal = config?.is_local !== false
   applyGating(state)
+}
+
+/**
+ * Adopts a §7.1 403 from a host-only route (`fs/list`, `open_folder`,
+ * `timeline_dir`) as the SERVER's authoritative locality verdict
+ * (2026-08-08 audit): stronger than a missed `/cprb/config` fetch, so it
+ * flips the bar shut instead of leaving buttons that 403 forever. Returns
+ * true when *error* was that verdict (whether or not anything changed).
+ */
+function adoptRemoteVerdict(state, error) {
+  if (!error || error.status !== 403) return false
+  if (state.isLocal !== false) {
+    state.isLocal = false
+    applyGating(state)
+  }
+  return true
 }
 
 function applyGating(state) {
@@ -673,7 +709,13 @@ function dirnameOfServerPath(path) {
   const sep = trimmed.includes('\\') && !trimmed.includes('/') ? '\\' : '/'
   const idx = trimmed.lastIndexOf(sep)
   if (idx <= 0) return null
-  return trimmed.slice(0, idx)
+  const head = trimmed.slice(0, idx)
+  // A drive-root file (`C:\timeline.xml`) must keep its separator: bare
+  // `C:` is a drive with no root, which `Path('C:').is_absolute()` rejects
+  // on the Windows host, so the picker would open straight into a 400
+  // instead of the drive's listing (2026-08-08 audit).
+  if (/^[A-Za-z]:$/.test(head)) return trimmed.slice(0, idx + 1)
+  return head
 }
 
 // ---------------------------------------------------------------------------
@@ -686,13 +728,28 @@ function dirnameOfServerPath(path) {
 // "new folder"/rename) and parameterized on PICKER_EXT.
 // ---------------------------------------------------------------------------
 
+/** The state whose picker currently owns the singleton overlay (and the
+ * window keydown listener that goes with it) — see closePicker(). */
+let activePickerState = null
+
 function closePicker(state) {
   document.getElementById(PICKER_OVERLAY_ID)?.remove()
-  if (state.pickerKeydownHandler) {
-    window.removeEventListener('keydown', state.pickerKeydownHandler)
-    state.pickerKeydownHandler = null
+  // The overlay is a module-level singleton but each node's keydown handler
+  // lives on ITS OWN state — so node B's openPicker closing node A's picker
+  // used to remove A's overlay while leaving A's window listener registered
+  // (the cross-node leak, 2026-08-08 audit). Tear down whichever state
+  // actually owns the live listener alongside the one passed in.
+  for (const owner of new Set([state, activePickerState])) {
+    if (!owner) continue
+    if (owner.pickerKeydownHandler) {
+      // Phase must match openPicker's addEventListener — a mismatched
+      // removeEventListener silently removes nothing.
+      window.removeEventListener('keydown', owner.pickerKeydownHandler, { capture: true })
+      owner.pickerKeydownHandler = null
+    }
+    owner.pickerPathInputEl = null
   }
-  state.pickerPathInputEl = null
+  activePickerState = null
 }
 
 /**
@@ -728,13 +785,24 @@ function openPicker(state, options) {
       closePicker(state)
     }
   }
-  window.addEventListener('keydown', state.pickerKeydownHandler)
+  // Capture phase on purpose (2026-08-08 audit): on the Vue-nodes frontend,
+  // keydown events born inside a node's DOM-widget wrapper stop bubbling
+  // before they reach window, so a bubble-phase listener never saw Escape
+  // in the most common focus state — the just-clicked Browse… button still
+  // holding focus. Capture-phase window listeners are the sibling packs'
+  // recorded ground truth for exactly this layer.
+  window.addEventListener('keydown', state.pickerKeydownHandler, { capture: true })
+  activePickerState = state
 
   // The navigable area is its own child so the path bar built next (which
   // sits above it, for the picker's whole lifetime) is never wiped out by
   // loadPickerDir()'s replaceChildren() calls.
   const content = el('div', { className: 'cprb-picker-content' })
   dialog.append(buildPickerPathBar(state, content), content)
+  // Start keyboard interaction inside the overlay — the path input is the
+  // picker's only text surface, and with focus in here Escape reaches the
+  // handler regardless of phase.
+  state.pickerPathInputEl?.focus()
 
   loadPickerDir(state, content, options.startDir ?? null)
 }
@@ -785,6 +853,14 @@ function buildPickerPathBar(state, content) {
 }
 
 async function loadPickerDir(state, content, dir) {
+  // Last-REQUEST-wins (2026-08-08 audit; LAN latency is a first-class
+  // condition here): every navigation bumps the sequence, and a response —
+  // success OR error — arriving for a superseded request renders nothing
+  // and never rewrites the path input. Without this, a slow listing (a
+  // sleeping share) could land AFTER a faster later navigation, replace
+  // it, and — in Save's dir mode — offer its stale dir to "Choose this
+  // folder".
+  const token = ++state.pickerRequestSeq
   content.replaceChildren(el('div', { className: 'cprb-picker-status', text: 'Loading…' }))
   // `mode: 'dir'` never sends `ext` at all: STANDARD-fs-browse.md's own
   // rule is that a blank/missing `ext` falls back to the pack's default
@@ -801,7 +877,12 @@ async function loadPickerDir(state, content, dir) {
   try {
     data = await api.getJson('/cprb/fs/list', params)
   } catch (error) {
+    if (token !== state.pickerRequestSeq) return
     api.warn('fs/list failed', error)
+    // A 403 here is the server's own §7.1 locality verdict — adopt it so
+    // the bar converges to the remote presentation (see adoptRemoteVerdict)
+    // while the inline error below still tells the user why.
+    adoptRemoteVerdict(state, error)
     // PROTOCOL.md §7.2: a bad/unreadable `dir` (typed by hand or not) is a
     // 400 — shown inline, right here, and the dialog otherwise stays put.
     content.replaceChildren(
@@ -818,6 +899,7 @@ async function loadPickerDir(state, content, dir) {
     )
     return
   }
+  if (token !== state.pickerRequestSeq) return
   renderPickerDialog(state, content, data)
 }
 
@@ -960,7 +1042,9 @@ function attachLoadUi(node) {
     node,
     fileWidget,
     isLocal: null,
+    gatingRetried: false,
     picker: null,
+    pickerRequestSeq: 0,
     pickerKeydownHandler: null,
     pickerPathInputEl: null,
     noteEl: null,
@@ -1020,6 +1104,9 @@ async function onOpenFolderClickLoad(state) {
     setStatus(state, '')
   } catch (error) {
     api.warn('open_folder failed', error)
+    // A 403 is the server's §7.1 verdict — hide the buttons and show the
+    // "Host machine only" note in addition to the status line.
+    adoptRemoteVerdict(state, error)
     setStatus(state, error.message || 'Could not open folder.', true)
   }
 }
@@ -1251,7 +1338,9 @@ function attachSaveUi(node) {
     sequenceNameWidget,
     outputDirWidget,
     isLocal: null,
+    gatingRetried: false,
     picker: null,
+    pickerRequestSeq: 0,
     pickerKeydownHandler: null,
     pickerPathInputEl: null,
     noteEl: null,
@@ -1335,6 +1424,9 @@ async function onOpenFolderClickSave(state) {
     setStatus(state, '')
   } catch (error) {
     api.warn('open folder failed', error)
+    // Covers a 403 from timeline_dir (loopback-gated since 2026-08-08)
+    // and open_folder alike — either is the server's §7.1 verdict.
+    adoptRemoteVerdict(state, error)
     setStatus(state, error.message || 'Could not open folder.', true)
   }
 }

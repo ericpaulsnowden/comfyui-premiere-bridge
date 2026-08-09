@@ -2,8 +2,9 @@
  * @file Toasts for "Send to Premiere" runs (PROTOCOL.md §10.6).
  *
  * Why this exists: `PremiereSendResult` returns a `ui.text` summary saying
- * either "Sent to Premiere: <path>" or "Plugin not connected — import
- * manually: <path>", but NOTHING in ComfyUI renders an arbitrary `ui.text`
+ * either "Sent to Premiere: <path>" or "NOT sent (no panel connected, or
+ * the send failed) — import manually: <path>", but NOTHING in ComfyUI
+ * renders an arbitrary `ui.text`
  * payload — so a run whose push silently failed looked exactly like a
  * successful one (owner, 2026-07-24: "The run finished, but I didn't see a
  * message anywhere that it didn't work"). The backend now emits a
@@ -42,14 +43,33 @@ import { warn } from './api.js'
  * (or a second event for the same node) replaces rather than stacks. */
 const STATUS_WIDGET_NAME = 'cprb_send_status'
 
-/** Finds a node by the id ComfyUI reported to the backend (string vs number
- * safe — UNIQUE_ID arrives as a string, litegraph keys on numbers). */
+/** The only class this module may paint (PROTOCOL.md §8's frozen id). */
+const SEND_RESULT_CLASS = 'PremiereSendResult'
+
+/** A node's ComfyUI class id — premiere_source.js's exact helper shape
+ * (comfyClass, constructor fallback, then `type`); litegraphService.ts sets
+ * `comfyClass` on both the class and its prototype for this purpose. */
+function nodeClassOf(node) {
+  if (!node) return null
+  if (node.comfyClass) return node.comfyClass
+  if (node.constructor && node.constructor.comfyClass) return node.constructor.comfyClass
+  if (node.type) return node.type
+  return null
+}
+
+/** Finds the Send-to-Premiere node by the id ComfyUI reported to the
+ * backend (string vs number safe — UNIQUE_ID arrives as a string, litegraph
+ * keys on numbers). Class-gated on purpose: `cprb.send_result` broadcasts
+ * to EVERY open tab (send_sync has no tab targeting — see
+ * premiere_source.js's header) and node ids are small per-workflow
+ * integers, so an id-only match would paint the status widget onto an
+ * arbitrary unrelated node in another tab's graph. */
 function findNodeById(nodeId) {
   if (nodeId == null) return null
   const nodes = app.graph?._nodes ?? app.graph?.nodes ?? []
   const wanted = String(nodeId)
   for (const node of nodes) {
-    if (String(node?.id) === wanted) return node
+    if (String(node?.id) === wanted && nodeClassOf(node) === SEND_RESULT_CLASS) return node
   }
   return null
 }
@@ -119,11 +139,14 @@ function onSendResult(payload) {
   // The PERSISTENT surface first — it survives whether or not this frontend
   // build has a working toast API, and it stays on screen.
   if (failed.length) {
+    // "Didn't reach the panel", not "not connected": pushed=false also
+    // covers a send timeout or a socket that died mid-send while the panel
+    // showed Connected (routes.py push_result) — don't assert a cause the
+    // backend didn't report.
     paintNodeStatus(
       payload?.node_id,
-      `NOT sent — no Premiere panel connected. Import manually: ${failed
-        .map((r) => basename(r.path))
-        .join(', ')}`,
+      `NOT sent — didn't reach the Premiere panel (not connected, or the send failed). ` +
+        `Import manually: ${failed.map((r) => basename(r.path)).join(', ')}`,
       true
     )
   } else if (pushed.length) {
@@ -153,10 +176,11 @@ function onSendResult(payload) {
     // status blip.
     toast({
       severity: 'warn',
-      summary: 'Premiere panel not connected',
+      summary: 'Not sent to Premiere',
       detail:
-        `${countLabel(failed.length)} saved but NOT imported — open the ComfyUI ` +
-        'Bridge panel in Premiere (or import manually):\n' +
+        `${countLabel(failed.length)} saved but NOT imported — the result didn't reach ` +
+        'the Premiere panel (not connected, or the send failed). Check the ComfyUI ' +
+        'Bridge panel in Premiere, or import manually:\n' +
         failed.map((r) => r.path).join('\n'),
       life: 15000
     })

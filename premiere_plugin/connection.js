@@ -26,9 +26,10 @@
  *     ping -- M1's server never pings, but §10.2 already accepts pong, so
  *     answering costs nothing now and makes the noted keepalive hardening a
  *     server-only change later (the same additive reasoning, mirrored).
- *   ({"type":"export_ready", ...} is RESERVED for M2's send-back direction
- *    -- nothing here sends it yet; the panel's S7 button only PROBES the
- *    Premiere-side export API that would feed it.)
+ *   {"type":"export_ready","kind":"frame"|"clip", ...}      sent by
+ *     export_source.js (cprbSendExportReady) on the panel's Frame/Clip ->
+ *     ComfyUI buttons -- M2's send-back direction, shipped (PROTOCOL.md
+ *     §11.3; the S7 spike button that once probed this API is gone).
  * (server -> client):
  *   {"type":"hello_ack","server_version":"..."}  handled internally
  *   {"type":"pr_result", ...}                    -> window.cprbHandleResult

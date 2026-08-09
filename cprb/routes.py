@@ -78,6 +78,18 @@ _FS_LIST_HOME_LABEL = "Home"
 #: extension-filtered-out files never consumes a slot.
 _FS_LIST_MAX_ENTRIES = 500
 
+#: Bound on the blocking filesystem work behind the §7.2 fs routes
+#: (`fs/list`'s iterdir/stat sweep, `open_folder`'s is_dir checks,
+#: `timeline_dir`'s exists probe) once it is handed to a worker thread
+#: (2026-08-08 audit). These routes take arbitrary user paths -- the picker's
+#: own placeholder suggests `\\server\share` -- and a sleeping/dead NAS or
+#: UNC share would otherwise stall the whole aiohttp loop for the SMB
+#: timeout: every HTTP request, the plugin websocket, queue progress. Same
+#: hazard, same fix, and same 5 s value as `_FRAMES_DIR_TIMEOUT_SECONDS` /
+#: `_EXPORT_STAT_TIMEOUT_SECONDS` below; on timeout the route answers
+#: (400, or `exists: null` for `timeline_dir`) instead of hanging.
+_FS_IO_TIMEOUT_SECONDS = 5.0
+
 
 def request_is_loopback(request: web.Request) -> bool:
     """True when *request* comes from this machine (PROTOCOL.md §7.1).
@@ -325,6 +337,76 @@ def _parse_extensions(raw: str) -> tuple[str, ...]:
     parts = [part.strip().lower() for part in (raw or "").split(",")]
     cleaned = tuple(f".{p.lstrip('.')}" for p in parts if p.strip(". "))
     return cleaned or DEFAULT_EXTENSIONS
+
+
+def _list_directory_entries(
+    directory: Path, extensions: tuple[str, ...]
+) -> dict[str, Any]:
+    """Blocking half of ``get_fs_list``'s real-directory branch (2026-08-08
+    audit) -- the iterdir/is_dir/stat sweep, verbatim from the handler it was
+    extracted out of. Runs on a worker thread (``asyncio.to_thread``) bounded
+    by :data:`_FS_IO_TIMEOUT_SECONDS`, exactly like :func:`ensure_frames_dir`
+    and :func:`_stat_export_path`: *directory* is any absolute path the
+    client typed (the picker's placeholder literally suggests
+    ``\\\\server\\share``), and a sleeping share must cost this one request a
+    400, never stall the event loop. Module-level so tests monkeypatch it --
+    the same seam convention as :func:`_reveal_folder`.
+
+    Raises ``OSError`` when *directory* cannot be listed (the route's 400).
+    """
+    entries = sorted(directory.iterdir(), key=lambda p: p.name.casefold())
+    dirs: list[dict[str, str]] = []
+    files: list[dict[str, object]] = []
+    count = 0
+    truncated = False
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            continue
+        if is_dir:
+            if count >= _FS_LIST_MAX_ENTRIES:
+                truncated = True
+                break
+            dirs.append({"name": entry.name})
+            count += 1
+            continue
+        if entry.suffix.lower() not in extensions:
+            continue
+        try:
+            stat_result = entry.stat()
+        except OSError:
+            continue
+        if count >= _FS_LIST_MAX_ENTRIES:
+            truncated = True
+            break
+        files.append(
+            {"name": entry.name, "size": stat_result.st_size, "mtime": stat_result.st_mtime}
+        )
+        count += 1
+    return {"dirs": dirs, "files": files, "truncated": truncated}
+
+
+def _existing_reveal_folder(path: Path) -> Path | None:
+    """Blocking half of ``post_open_folder``'s target resolution (2026-08-08
+    audit): the folder to reveal (*path* itself when it is a directory, else
+    its parent), or ``None`` when neither exists -- the route's 404. Split
+    out for the same worker-thread + timeout treatment (and the same
+    monkeypatch seam) as :func:`_list_directory_entries`: both ``is_dir``
+    probes hit whatever path the client sent, dead shares included.
+    """
+    folder = path if path.is_dir() else path.parent
+    return folder if folder.is_dir() else None
+
+
+def _dir_exists(directory: Path) -> bool:
+    """Blocking half of ``get_timeline_dir``'s ``exists`` probe (2026-08-08
+    audit) -- its own seam, like the two helpers above, so tests can simulate
+    a stalled share without a real one.
+    """
+    return directory.is_dir()
 
 
 # ------------------------------------------------ Tier 2: plugin websocket (§10)
@@ -751,9 +833,10 @@ def push_result(
     :data:`_PUSH_SEND_TIMEOUT_SECONDS` — cpsb's `_send_tier2_open` pattern.
 
     Every §10.3 field is always present in the message — ``color_label``/
-    ``insert_at_playhead`` stay ``""``/``False`` until later node versions
-    add their widgets; the plugin skips absent/empty ones — so the plugin
-    never needs per-field feature detection.
+    ``insert_at_playhead`` carry ``PremiereSendResult``'s own widget values
+    (real widgets since v0.9.2/v0.9.3); ``""``/``False`` mean "skip that
+    option", and the plugin skips absent/empty ones — so the plugin never
+    needs per-field feature detection.
 
     Returns:
         ``True`` when the message was handed to the socket within the
@@ -871,42 +954,29 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         if not directory.is_absolute():
             return error_response(400, f"dir must be an absolute path (got {raw!r})")
         extensions = _parse_extensions(request.query.get("ext", ""))
+        # OFF THE EVENT LOOP, and bounded (2026-08-08 audit) -- the sweep
+        # below stats whatever path the client typed, dead UNC shares
+        # included; see _FS_IO_TIMEOUT_SECONDS and the hello handler's
+        # identical ensure_frames_dir treatment.
         try:
-            entries = sorted(directory.iterdir(), key=lambda p: p.name.casefold())
+            listing = await asyncio.wait_for(
+                asyncio.to_thread(_list_directory_entries, directory, extensions),
+                timeout=_FS_IO_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "cprb: listing %s took longer than %.0fs (a slow or unreachable "
+                "share?) — answering 400 instead of stalling the server",
+                directory,
+                _FS_IO_TIMEOUT_SECONDS,
+            )
+            return error_response(
+                400,
+                f"listing {directory} took longer than "
+                f"{_FS_IO_TIMEOUT_SECONDS:.0f}s (a slow or unreachable share?)",
+            )
         except OSError as exc:
             return error_response(400, f"could not list {directory}: {exc}")
-
-        dirs: list[dict[str, str]] = []
-        files: list[dict[str, object]] = []
-        count = 0
-        truncated = False
-        for entry in entries:
-            if entry.name.startswith("."):
-                continue
-            try:
-                is_dir = entry.is_dir()
-            except OSError:
-                continue
-            if is_dir:
-                if count >= _FS_LIST_MAX_ENTRIES:
-                    truncated = True
-                    break
-                dirs.append({"name": entry.name})
-                count += 1
-                continue
-            if entry.suffix.lower() not in extensions:
-                continue
-            try:
-                stat_result = entry.stat()
-            except OSError:
-                continue
-            if count >= _FS_LIST_MAX_ENTRIES:
-                truncated = True
-                break
-            files.append(
-                {"name": entry.name, "size": stat_result.st_size, "mtime": stat_result.st_mtime}
-            )
-            count += 1
 
         at_root = directory.parent == directory
         parent = _fs_root_parent(directory, windows=windows) if at_root else str(directory.parent)
@@ -915,9 +985,9 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
                 "dir": str(directory),
                 "parent": parent,
                 "sep": os.sep,
-                "dirs": dirs,
-                "files": files,
-                "truncated": truncated,
+                "dirs": listing["dirs"],
+                "files": listing["files"],
+                "truncated": listing["truncated"],
             }
         )
 
@@ -935,9 +1005,32 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         if not raw:
             return error_response(400, "path is required")
         path = Path(raw)
-        folder = path if path.is_dir() else path.parent
-        if not folder.is_dir():
-            return error_response(404, f"no such folder: {folder}")
+        # Same worker-thread + timeout treatment as get_fs_list above
+        # (2026-08-08 audit): both is_dir probes hit an arbitrary client
+        # path, so a dead share must cost a 400, never the event loop.
+        try:
+            folder = await asyncio.wait_for(
+                asyncio.to_thread(_existing_reveal_folder, path),
+                timeout=_FS_IO_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "cprb: checking %s took longer than %.0fs (a slow or unreachable "
+                "share?) — answering 400 instead of stalling the server",
+                path,
+                _FS_IO_TIMEOUT_SECONDS,
+            )
+            return error_response(
+                400,
+                f"checking {path} took longer than "
+                f"{_FS_IO_TIMEOUT_SECONDS:.0f}s (a slow or unreachable share?)",
+            )
+        if folder is None:
+            # None means neither *path* nor its parent is a directory; the
+            # folder the pre-extraction inline check would have named here is
+            # always the PARENT (a directory *path* would have passed as
+            # itself), so name that — computed, no fresh on-loop probe.
+            return error_response(404, f"no such folder: {path.parent}")
         try:
             _reveal_folder(folder)
         except Exception as exc:
@@ -992,11 +1085,37 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         the node itself warns about; this route has no UI summary to put a
         warning in, so it just quietly resolves what the node WOULD
         actually do).
+
+        Loopback-only since the 2026-08-08 audit, same §7.1 gate as its
+        `fs/list`/`open_folder` siblings: an absolute ``output_dir`` makes
+        the ``exists`` probe read HOST filesystem state at an arbitrary
+        client-supplied path, and the only frontend caller (Save's "Open
+        folder" button) is itself hidden for remote viewers -- so a remote
+        caller could never complete the flow anyway. The probe also moves
+        off the event loop, bounded: on timeout ``exists`` is ``null``
+        ("unverified", never "missing"), with ``dir`` still resolved.
         """
+        if not request_is_loopback(request):
+            return error_response(
+                403, "resolving the timeline folder is host-machine-only — PROTOCOL.md §7.1"
+            )
         sequence_name = request.query.get("sequence_name", "")
         output_dir = request.query.get("output_dir", "")
         directory = context.resolve_timeline_dir(sequence_name, output_dir)
-        return web.json_response({"dir": str(directory), "exists": directory.is_dir()})
+        try:
+            exists: bool | None = await asyncio.wait_for(
+                asyncio.to_thread(_dir_exists, directory),
+                timeout=_FS_IO_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "cprb: checking whether %s exists took longer than %.0fs (a slow "
+                "or unreachable share?) — reporting exists: null",
+                directory,
+                _FS_IO_TIMEOUT_SECONDS,
+            )
+            exists = None
+        return web.json_response({"dir": str(directory), "exists": exists})
 
 
 def build_routes(context: BridgeContext) -> web.RouteTableDef:

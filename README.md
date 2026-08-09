@@ -362,7 +362,7 @@ inputs, or files sitting in ComfyUI's temp folder get written out first (into
 
 This is an **output node**, so it can sit at the end of a graph.
 
-**Inputs** — all optional; wire at least one of `video` / `image`.
+**Inputs** — all optional; wire at least one of `video` / `image` / `frames`.
 
 | Input | Type | Default | Panel? | Meaning |
 |---|---|---|---|---|
@@ -394,8 +394,9 @@ a linked-in-place video this is the **original source path**, not a copy under
 
 **`insert_at_playhead`** is **off by default**, so results only ever land in the
 bin and your sequence is untouched. Switch it on and the clip is *also* dropped
-onto the active sequence at your playhead, on the track above, as **one** undo
-step. With no sequence open it's skipped with a logged line — never a guess.
+onto the **topmost video track** at your playhead as **one** undo step — an
+overwrite, so anything already on that track at that spot is replaced. With no
+sequence open it's skipped with a logged line — never a guess.
 (Proven live on Premiere 26.3.)
 
 **Without the panel.** The node still resolves your result to a real file and
