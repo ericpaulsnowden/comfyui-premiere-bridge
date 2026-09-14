@@ -28,6 +28,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import string
 import subprocess
@@ -467,6 +468,50 @@ FRAMES_DIR_ENV = "CPRB_FRAMES_DIR"
 #: tree. 200 is far more than any session revisits.
 FRAMES_KEEP_NEWEST = 200
 
+#: Ownership marker every bridge-written frame carries (RELEASE-REVIEW
+#: 2026-09-13 finding #1). `$CPRB_FRAMES_DIR` lets a user point this pack at
+#: ANY absolute folder (§11.1's escape hatch for a share Premiere can't
+#: write to) — including, by mistake, one that already holds unrelated
+#: images. Before this prefix existed, :func:`_prune_frames_dir` treated
+#: every ``*.png`` in that folder as its own and deleted whatever didn't
+#: make the newest-200 cut, unrelated files included. The prefix is applied
+#: by the plugin's ``cprbUniqueFrameName`` (premiere_plugin/export_source.js)
+#: on every export it writes, so pruning can tell "ours" from "a stranger's"
+#: by name alone, with no manifest file and no directory-scan side effects.
+FRAME_OWNERSHIP_PREFIX = "cprb_"
+
+#: The plugin names every export ``<prefix><stem>_<base36 ms timestamp>_<seq
+#: no.>.png`` (:func:`cprbUniqueFrameName` / :func:`cprbSanitizeStem` in
+#: export_source.js — *stem* is the sanitized sequence name, restricted to
+#: ``[A-Za-z0-9._-]``). Anchored both ends so a name only *containing* this
+#: shape (e.g. a real photo someone renamed ``notes_cprb_1_2.png.bak``)
+#: cannot slip through. The stem's own character class already permits
+#: ``_``, so the split between stem/timestamp/sequence is ambiguous in
+#: principle — but since the timestamp and sequence groups are anchored to
+#: the END of the name, Python's greedy-then-backtrack matching always
+#: resolves it to the same split :func:`cprbUniqueFrameName` produced, which
+#: is all pruning needs (it never has to recover the stem itself).
+_OWNED_FRAME_NAME_RE = re.compile(
+    re.escape(FRAME_OWNERSHIP_PREFIX) + r"[A-Za-z0-9._-]+_[0-9a-z]+_[0-9]+\.png\Z"
+)
+
+#: Exports written before this prefix existed: the exact same shape, minus
+#: the prefix. Only ever consulted for the DEFAULT frames folder (never a
+#: `$CPRB_FRAMES_DIR` override) — see :func:`ensure_frames_dir` — because a
+#: custom folder is the one place a coincidentally-matching stranger's file
+#: is plausible, and the whole point of this fix is to stop guessing there.
+#: The negative lookahead keeps this pattern and :data:`_OWNED_FRAME_NAME_RE`
+#: mutually exclusive (a prefixed name is never ALSO "legacy") purely for
+#: clarity; either regex matching is equally sufficient for pruning.
+#: The timestamp is held to the exact width `Date.now().toString(36)` has had
+#: since 1994 and keeps until 2059: 8 characters starting with a LETTER. With
+#: no prefix to lean on, shape is all there is, and a loose `[0-9a-z]+` also
+#: matched camera-style names such as `IMG_1000_0.png` or
+#: `IMG_20240101_123456.png` (lead review, 2026-09-13).
+_LEGACY_FRAME_NAME_RE = re.compile(
+    r"(?!" + re.escape(FRAME_OWNERSHIP_PREFIX) + r")[A-Za-z0-9._-]+_[a-z][0-9a-z]{7}_[0-9]+\.png\Z"
+)
+
 
 def resolve_frames_dir(context: BridgeContext) -> Path:
     """Where the panel writes its frame exports — computed, NOT created.
@@ -496,17 +541,54 @@ def resolve_frames_dir(context: BridgeContext) -> Path:
     return context.input_dir / FRAMES_DIRNAME
 
 
-def _prune_frames_dir(directory: Path, keep: int = FRAMES_KEEP_NEWEST) -> int:
-    """Delete all but the *keep* newest ``*.png`` in *directory*.
+def _prune_frames_dir(
+    directory: Path,
+    keep: int = FRAMES_KEEP_NEWEST,
+    *,
+    include_legacy: bool = False,
+) -> int:
+    """Delete all but the *keep* newest BRIDGE-OWNED exports in *directory*.
 
-    Returns how many files were removed. Every failure is swallowed: this is
-    housekeeping on the way to answering a handshake, and a share that won't
-    let us stat or unlink must not cost the user their connection.
+    "Bridge-owned" means the name matches :data:`_OWNED_FRAME_NAME_RE`
+    (every current export, prefix and all), plus — only when
+    *include_legacy* is true — :data:`_LEGACY_FRAME_NAME_RE` (pre-prefix
+    exports). Everything else in the directory, PNG or not, is never
+    inspected for retention and never removed: this used to glob every
+    ``*.png`` regardless of who wrote it, which is exactly how pointing
+    ``$CPRB_FRAMES_DIR`` at an existing photo folder made a handshake delete
+    someone else's pictures (RELEASE-REVIEW 2026-09-13 finding #1).
+    *include_legacy* must only be true for the pack's OWN default folder
+    (:func:`ensure_frames_dir` decides this) — a custom folder is precisely
+    the case where a stranger's file coincidentally shaped like the old
+    unprefixed pattern must NOT be treated as ours.
+
+    A symlink is never followed and never counted, even when its name
+    matches and even when it points at a real file *inside* this same
+    directory — this is a delete path, and "resolve it first" is exactly
+    the kind of check a symlink is designed to defeat. Anything that is not
+    a plain file (a directory, a FIFO, …) is skipped the same way, even if
+    its name matches perfectly. Only :meth:`Path.glob` is used, never
+    ``rglob``/``walk``, so nothing below *directory* is ever visited.
+
+    Returns how many files were removed. Every per-entry failure is
+    swallowed: this is housekeeping on the way to answering a handshake,
+    and a share that won't let us stat or unlink one entry must not cost
+    the user their connection.
     """
     try:
         stamped = []
         for entry in directory.glob("*.png"):
             try:
+                if entry.is_symlink():
+                    continue
+                if not entry.is_file():
+                    continue
+                name = entry.name
+                owned = _OWNED_FRAME_NAME_RE.match(name) is not None
+                if not owned and not (
+                    include_legacy and _LEGACY_FRAME_NAME_RE.match(name)
+                ):
+                    continue
                 stamped.append((entry.stat().st_mtime_ns, entry))
             except OSError:
                 continue
@@ -552,6 +634,12 @@ def ensure_frames_dir(context: BridgeContext) -> Path:
     must hand this to a thread — the default folder can be a UNC share, and
     a sleeping share would otherwise stall all of ComfyUI for the SMB
     timeout. :func:`_handle_plugin_message` does exactly that.
+
+    The prune pass (:func:`_prune_frames_dir`) only ever touches names it
+    recognizes as its own — see :data:`FRAME_OWNERSHIP_PREFIX` — and, in
+    THIS folder specifically (never a ``$CPRB_FRAMES_DIR`` override), the
+    pre-prefix legacy shape too. Pointing the override at a folder full of
+    someone else's PNGs no longer risks them.
     """
     directory = resolve_frames_dir(context)
     try:
@@ -563,7 +651,14 @@ def ensure_frames_dir(context: BridgeContext) -> Path:
             directory,
         )
         return directory
-    _prune_frames_dir(directory)
+    # Legacy (pre-prefix) names are only ever eligible for pruning in the
+    # pack's OWN default folder — never in a `$CPRB_FRAMES_DIR` override,
+    # where a same-shaped name is someone else's file, not an old export of
+    # ours. Compared against the computed default rather than re-parsing the
+    # environment variable so this stays correct however `resolve_frames_dir`
+    # ends up choosing the default (today: unset, blank, or non-absolute).
+    is_default_dir = directory == context.input_dir / FRAMES_DIRNAME
+    _prune_frames_dir(directory, include_legacy=is_default_dir)
     return directory
 
 

@@ -495,17 +495,33 @@ def test_frames_dir_ignores_an_empty_override(
     )
 
 
+def _owned_name(stem: str, index: int) -> str:
+    """A name shaped exactly like :func:`cprbUniqueFrameName` produces."""
+    return f"{cprb_routes.FRAME_OWNERSHIP_PREFIX}{stem}_1a2b3c{index}_{index}.png"
+
+
+def _legacy_name(stem: str, index: int) -> str:
+    """The pre-prefix shape :data:`_LEGACY_FRAME_NAME_RE` still recognizes."""
+    return f"{stem}_mu{index:06d}_{index}.png"  # 8-char, letter-first, like Date.now().toString(36)
+
+
 def test_ensure_frames_dir_keeps_only_the_newest_exports(context: BridgeContext) -> None:
     """Unique names per export (§11.7) mean this folder never self-limits.
 
     Every click writes a fresh full-resolution PNG — 10-25 MB at 4K — into
     ComfyUI's input tree, forever. Retention is a contract (§11.1), so it is
     asserted rather than left to whoever reads the folder later.
+
+    Fixture names are real bridge-owned exports (``cprb_``-prefixed), not the
+    arbitrary ``f0.png``-style names this test used before the ownership fix
+    (RELEASE-REVIEW 2026-09-13 finding #1) — those matched nothing under the
+    new name-based filter and would silently stop exercising retention at
+    all, which is precisely the bug class this whole change closes.
     """
     frames = cprb_routes.ensure_frames_dir(context)
     keep = 3
     for index in range(keep + 4):
-        frame = frames / f"f{index}.png"
+        frame = frames / _owned_name("f", index)
         frame.write_bytes(b"x")
         os.utime(frame, (1_000_000 + index, 1_000_000 + index))
     other = frames / "notes.txt"
@@ -515,7 +531,11 @@ def test_ensure_frames_dir_keeps_only_the_newest_exports(context: BridgeContext)
 
     assert removed == 4
     survivors = sorted(p.name for p in frames.glob("*.png"))
-    assert survivors == ["f4.png", "f5.png", "f6.png"]  # the newest by mtime
+    assert survivors == [
+        _owned_name("f", 4),
+        _owned_name("f", 5),
+        _owned_name("f", 6),
+    ]  # the newest by mtime
     assert other.exists()  # only *.png is ours to prune
 
 
@@ -525,6 +545,219 @@ def test_prune_is_a_no_op_below_the_threshold(context: BridgeContext) -> None:
 
     assert cprb_routes._prune_frames_dir(frames, keep=200) == 0
     assert (frames / "only.png").exists()
+
+
+# ------------------------------- RELEASE-REVIEW 2026-09-13 finding #1: ownership
+
+
+def test_prune_in_a_custom_dir_never_touches_unowned_pngs(
+    context: BridgeContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual reported bug: ``$CPRB_FRAMES_DIR`` pointed at a photo folder.
+
+    250 unrelated PNGs (some deliberately shaped like the LEGACY export
+    pattern, to prove that shape is never consulted outside the default
+    folder) share the directory with 210 real ``cprb_``-prefixed exports.
+    Only the 10 oldest owned exports may go; every unrelated file — no
+    matter its name or age — must survive untouched.
+    """
+    custom_dir = tmp_path / "someones_existing_photos"
+    monkeypatch.setenv(cprb_routes.FRAMES_DIR_ENV, str(custom_dir))
+    frames = cprb_routes.ensure_frames_dir(context)
+    assert frames == custom_dir
+
+    unrelated_names = [f"user-photo-{i:04d}.png" for i in range(200)]
+    unrelated_names += [f"vacation_{i}.jpg.png" for i in range(30)]
+    # Superficially resemble the LEGACY bridge pattern (stem_base36_seq.png)
+    # purely by coincidence — must still never be touched in a custom dir.
+    unrelated_names += [f"IMG_{1000 + i}_{i}.png" for i in range(20)]
+    assert len(unrelated_names) == 250
+
+    for i, name in enumerate(unrelated_names):
+        path = custom_dir / name
+        path.write_bytes(b"someone else's picture")
+        os.utime(path, (2_000_000 + i, 2_000_000 + i))
+
+    owned_names = [_owned_name("timeline", i) for i in range(210)]
+    for i, name in enumerate(owned_names):
+        path = custom_dir / name
+        path.write_bytes(b"a real export")
+        os.utime(path, (1_000_000 + i, 1_000_000 + i))  # older than the "photos"
+
+    removed = cprb_routes._prune_frames_dir(custom_dir, keep=cprb_routes.FRAMES_KEEP_NEWEST)
+
+    assert removed == 10
+    for name in unrelated_names:
+        assert (custom_dir / name).exists(), f"unrelated file {name} was touched"
+    surviving_owned = sorted(
+        p.name for p in custom_dir.glob(f"{cprb_routes.FRAME_OWNERSHIP_PREFIX}*.png")
+    )
+    assert surviving_owned == sorted(owned_names[10:])  # the 10 oldest are gone
+    assert len(list(custom_dir.glob("*.png"))) == 250 + 200  # unrelated + survivors
+
+
+def test_prune_in_the_default_dir_retires_legacy_and_prefixed_together(
+    context: BridgeContext,
+) -> None:
+    """Default folder only: legacy (pre-prefix) and ``cprb_`` exports share
+    ONE retention pool, pruned together by age — not two separate 200-caps —
+    while an unrelated PNG (given the OLDEST mtime of anything in the
+    directory, so a name-blind implementation would prune it first) is left
+    alone.
+    """
+    frames = cprb_routes.ensure_frames_dir(context)
+
+    unrelated = frames / "not_ours.png"
+    unrelated.write_bytes(b"someone's screenshot")
+    os.utime(unrelated, (500_000, 500_000))  # oldest file in the directory
+
+    # 210 eligible files, interleaved: even mtimes are legacy, odd are owned,
+    # so the oldest 10 (mtimes 0-9) span BOTH patterns.
+    eligible_names: list[str] = []
+    for i in range(210):
+        name = _legacy_name("seq", i) if i % 2 == 0 else _owned_name("seq", i)
+        path = frames / name
+        path.write_bytes(b"an export")
+        os.utime(path, (1_000_000 + i, 1_000_000 + i))
+        eligible_names.append(name)
+
+    removed = cprb_routes._prune_frames_dir(
+        frames, keep=cprb_routes.FRAMES_KEEP_NEWEST, include_legacy=True
+    )
+
+    assert removed == 10
+    assert unrelated.exists()
+    survivors = {p.name for p in frames.glob("*.png")}
+    assert unrelated.name in survivors
+    assert survivors == {unrelated.name, *eligible_names[10:]}
+    removed_names = set(eligible_names[:10])
+    assert any(n.startswith(cprb_routes.FRAME_OWNERSHIP_PREFIX) for n in removed_names)
+    assert any(not n.startswith(cprb_routes.FRAME_OWNERSHIP_PREFIX) for n in removed_names)
+
+
+def test_prune_in_the_default_dir_spares_camera_style_names(context: BridgeContext) -> None:
+    """The legacy allowance matches the real timestamp shape, not any
+    `word_digits_digits.png`: a camera or screenshot name dropped into the
+    default folder is never mistaken for an old export."""
+    frames = cprb_routes.ensure_frames_dir(context)
+    strangers = ["IMG_1000_0.png", "IMG_20240101_123456.png", "DSC_00001234_1.png"]
+    for i, name in enumerate(strangers):
+        path = frames / name
+        path.write_bytes(b"a photo")
+        os.utime(path, (1_000 + i, 1_000 + i))  # the oldest files present
+    for i in range(cprb_routes.FRAMES_KEEP_NEWEST + 5):
+        path = frames / _legacy_name("seq", i)
+        path.write_bytes(b"an export")
+        os.utime(path, (1_000_000 + i, 1_000_000 + i))
+
+    removed = cprb_routes._prune_frames_dir(frames, include_legacy=True)
+
+    assert removed == 5
+    assert all((frames / name).exists() for name in strangers)
+
+
+def test_prune_ignores_legacy_shaped_names_outside_the_default_dir(
+    context: BridgeContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§11.1's whole point: a CUSTOM folder never gets the legacy allowance.
+
+    Without ``include_legacy`` these old-style names are indistinguishable
+    from a stranger's file, so they must survive no matter how old they are.
+    """
+    custom_dir = tmp_path / "external"
+    monkeypatch.setenv(cprb_routes.FRAMES_DIR_ENV, str(custom_dir))
+    frames = cprb_routes.ensure_frames_dir(context)
+
+    legacy_paths = []
+    for i in range(210):
+        path = frames / _legacy_name("seq", i)
+        path.write_bytes(b"x")
+        os.utime(path, (1_000_000 + i, 1_000_000 + i))
+        legacy_paths.append(path)
+
+    removed = cprb_routes._prune_frames_dir(frames, keep=cprb_routes.FRAMES_KEEP_NEWEST)
+
+    assert removed == 0
+    assert all(p.exists() for p in legacy_paths)
+
+
+def test_prune_never_follows_a_symlink_or_recurses_into_a_subdirectory(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    """A symlink or a directory named exactly like an export is not a file.
+
+    Both are given the OLDEST mtimes of anything present, so a check that
+    forgot ``is_symlink()``/``is_file()`` would pick them first. The
+    symlink's target — deliberately OUTSIDE the frames directory — must
+    also survive: ``unlink()`` on a symlink only ever removes the link
+    itself, but the point is this code must never even try.
+    """
+    frames = cprb_routes.ensure_frames_dir(context)
+
+    victim_dir = tmp_path / "outside"
+    victim_dir.mkdir()
+    victim = victim_dir / "precious.png"
+    victim.write_bytes(b"do not delete me")
+
+    symlink_name = _owned_name("link", 0)
+    symlink_path = frames / symlink_name
+    symlink_path.symlink_to(victim)
+    os.utime(symlink_path, (1, 1), follow_symlinks=False)
+
+    subdir_name = _owned_name("dir", 0)
+    subdir_path = frames / subdir_name
+    subdir_path.mkdir()
+    nested = subdir_path / "sneaky.png"
+    nested.write_bytes(b"should never be visited")
+    os.utime(subdir_path, (2, 2))
+
+    # Enough real owned files to force pruning past the two impostors above.
+    real_paths = []
+    for i in range(205):
+        path = frames / _owned_name("real", i)
+        path.write_bytes(b"x")
+        os.utime(path, (10_000 + i, 10_000 + i))
+        real_paths.append(path)
+
+    removed = cprb_routes._prune_frames_dir(frames, keep=cprb_routes.FRAMES_KEEP_NEWEST)
+
+    assert removed == 5  # only the 5 oldest REAL files
+    assert symlink_path.is_symlink()  # untouched
+    assert victim.exists()  # target never touched either
+    assert subdir_path.is_dir()  # untouched
+    assert nested.exists()  # never recursed into
+    survivors = {p.name for p in frames.glob("*.png") if p.is_file() and not p.is_symlink()}
+    assert survivors == {p.name for p in real_paths[5:]}
+
+
+def test_ensure_frames_dir_enables_legacy_pruning_only_for_the_default_folder(
+    context: BridgeContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wiring check: :func:`ensure_frames_dir` must derive *include_legacy*
+    from whether the RESOLVED directory is the default one, not from
+    whether an env var happens to be set — ``resolve_frames_dir`` already
+    has three ways to end up at the default (unset/blank/non-absolute)."""
+    calls: list[bool] = []
+    real_prune = cprb_routes._prune_frames_dir
+
+    def _spy(directory, keep=cprb_routes.FRAMES_KEEP_NEWEST, *, include_legacy=False):
+        calls.append(include_legacy)
+        return real_prune(directory, keep, include_legacy=include_legacy)
+
+    monkeypatch.setattr(cprb_routes, "_prune_frames_dir", _spy)
+
+    cprb_routes.ensure_frames_dir(context)
+    assert calls == [True]
+
+    calls.clear()
+    monkeypatch.setenv(cprb_routes.FRAMES_DIR_ENV, str(tmp_path / "elsewhere"))
+    cprb_routes.ensure_frames_dir(context)
+    assert calls == [False]
+
+    calls.clear()
+    monkeypatch.setenv(cprb_routes.FRAMES_DIR_ENV, "not/absolute")  # ignored -> default
+    cprb_routes.ensure_frames_dir(context)
+    assert calls == [True]
 
 
 async def test_hello_does_not_block_the_event_loop_on_a_slow_share(

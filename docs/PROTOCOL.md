@@ -776,7 +776,24 @@ inventing an output path that would fail silently. "Clip → ComfyUI" needs no
   each `hello`, in that same off-loop task. A contract, not a surprise: every
   click writes a fresh full-resolution still (unique names are *required* —
   §11.7 — which is exactly what stops the folder self-limiting), a 4K PNG is
-  10-25 MB, and nothing else would ever clean it up. Only `*.png` is touched.
+  10-25 MB, and nothing else would ever clean it up.
+- **Retention only ever touches bridge-owned names (v0.15.0; release review
+  2026-09-13 finding #1).** Until v0.14.5 every `*.png` in the folder was a
+  candidate, so a `CPRB_FRAMES_DIR` pointed at an existing image folder
+  deleted the user's own pictures on the next `hello`. The name contract:
+  - Every export is named `cprb_<sanitized stem>_<base36 ms timestamp>_<seq>.png`
+    by `cprbUniqueFrameName`. The prefix constant is mirrored as
+    `FRAME_OWNERSHIP_PREFIX`, and a Node-run test pins that the JS names
+    match the server's regex.
+  - Only names matching `_OWNED_FRAME_NAME_RE` are eligible.
+  - In the DEFAULT folder only, the pre-prefix shape is also eligible
+    (`_LEGACY_FRAME_NAME_RE`). Its timestamp is held to the real width of
+    `Date.now().toString(36)`: 8 characters, letter first. That keeps
+    camera-style names such as `IMG_20240101_123456.png` out.
+  - Never in a `CPRB_FRAMES_DIR` override, where a same-shaped name belongs
+    to someone else.
+  - Symlinks and non-files are skipped even when their names match, and
+    nothing below the folder is visited.
 - Directory-creation failure is logged and NOT raised: the handshake matters
   more than the folder, and `hello_ack` still reports the resolved path so
   the failure stays diagnosable (the plugin's export error names it, and
