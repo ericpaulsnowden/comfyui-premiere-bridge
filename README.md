@@ -1,5 +1,7 @@
 # comfyui-premiere-bridge
 
+![CI](https://github.com/ericpaulsnowden/comfyui-premiere-bridge/actions/workflows/ci.yml/badge.svg)
+
 Move video, stills and edits between ComfyUI and Adobe Premiere Pro — on the
 same machine, by exchanging file paths rather than copying bytes around.
 
@@ -660,6 +662,12 @@ Then, from the repo root:
 ```bash
 pytest -q
 ```
+
+Development dependencies are pinned in `requirements-dev.txt` (install into a
+throwaway venv, not into ComfyUI's: they are exact pins). `python
+scripts/check_version_sync.py` checks the version files agree, and CI runs
+ruff, that check and the suite on Linux and Windows, Python 3.10 / 3.13 /
+3.14, on every push to `main` and every pull request.
 
 ## License
 
