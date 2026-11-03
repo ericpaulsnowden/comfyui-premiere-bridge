@@ -203,7 +203,11 @@ silently dropped clip.
 the effective folder in your file manager (Explorer, Finder or `xdg-open`) —
 exactly where you go next to import it. Both buttons hide themselves, leaving the
 path typeable, when you're viewing ComfyUI from a *different* machine than the one
-it runs on, since they'd be browsing the wrong filesystem.
+it runs on, since they'd be browsing the wrong filesystem. If a mapped drive or
+network share is asleep or disconnected, the folder browser (on this node and on
+Load Premiere Timeline) shows a "took longer than 5s" error instead of freezing
+ComfyUI — including on its top level, which lists every drive and mounted volume
+— so type the path you want instead.
 
 **Gotchas.**
 
@@ -415,6 +419,13 @@ on your next Run once the panel is back — you don't have to touch the node.
   `written_path` reports only the video's.
 - The no-op colour option is spelled **`Default`**, not "None" — every Premiere
   clip carries some label, so there is no "no colour" state to pick.
+- **Sending a file that's already in your project** — typically an untrimmed
+  source clip, which is linked in place, sent a second time — imports it again
+  as a **new** item, and the colour, tag and playhead insert go to that new item,
+  never to the older one (or the in/out trim you gave it). The panel tells the
+  two apart by Premiere's item id; if its log ever says *"falling back to
+  media-path matching"*, your Premiere build doesn't expose that id and a
+  re-send may target the older item.
 - The re-send above re-runs the whole node, so on the branches that *write* a
   file (in-memory video, a trimmed input, a temp-folder source, an image) a
   failed-then-retried send leaves one unused file behind in
@@ -636,7 +647,9 @@ declares none of its own (see [Install](#1-the-node-pack--required)). The test
 suite goes further and exercises real image/tensor/media code paths, which need
 `pillow`, `torch` and `av` (PyAV) actually importable. Without them, those
 specific tests **skip with a reason** instead of failing, so running the suite
-with a bare `pytest` install is expected to show skips, never failures.
+with a bare `pytest` install is expected to show skips, never failures. One file,
+`tests/test_import_recipe_js.py`, runs the Premiere panel's real import code
+under **Node.js** (plain `node` on `PATH`, no npm install) and skips without it.
 
 Simplest way to a fully green run (no skips): a venv with
 `pip install pytest pytest-aiohttp pytest-asyncio ruff pillow av` plus a

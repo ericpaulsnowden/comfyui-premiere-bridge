@@ -8,9 +8,11 @@ Explorer windows.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -276,6 +278,45 @@ async def test_fs_list_slow_share_is_400_not_a_stall(
     response = await client.get("/cprb/fs/list", params={"dir": str(tmp_path)})
     assert response.status == 400
     assert "longer than" in (await response.json())["error"]
+
+
+async def test_fs_list_roots_slow_probe_is_400_and_loop_stays_responsive(
+    client, monkeypatch
+) -> None:
+    # 2026-11-03 (release review perf item 1): the ROOTS listing used to be
+    # built INLINE on the event loop -- a disconnected mapped drive or a
+    # sleeping /Volumes mount stalled every request while the picker opened
+    # its top level. It now gets the directory branch's exact treatment. The
+    # stub sleeps far past a tiny bound; a second request sent while it is
+    # sleeping must come back BEFORE the stub finishes (a synchronous stall
+    # would hold that request until the stub returned, and the ROOTS answer
+    # would be a late 200 instead of the 400).
+    monkeypatch.setattr(cprb_routes, "_FS_IO_TIMEOUT_SECONDS", 0.05)
+    started = threading.Event()
+    finished = threading.Event()
+
+    def stall(context, *, windows: bool) -> list:
+        started.set()
+        time.sleep(0.5)
+        finished.set()
+        return []
+
+    monkeypatch.setattr(cprb_routes, "_fs_list_roots", stall)
+
+    async def request_while_stub_sleeps() -> bool:
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        response = await client.get("/cprb/version")
+        assert response.status == 200
+        return finished.is_set()
+
+    roots_response, stub_finished_first = await asyncio.gather(
+        client.get("/cprb/fs/list", params={"dir": "ROOTS"}),
+        request_while_stub_sleeps(),
+    )
+    assert stub_finished_first is False
+    assert roots_response.status == 400
+    assert "longer than" in (await roots_response.json())["error"]
 
 
 # ------------------------------------------------ fs/list: ROOTS & drive roots

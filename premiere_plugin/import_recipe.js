@@ -259,19 +259,172 @@ async function disableIngestBestEffort(pr, project) {
   }
 }
 
+/* ------------------ item identity (which item is the import?) ------------------ */
+
+/*
+ * WHY THIS EXISTS (release review 2026-09-13, item 9). importFiles returns a
+ * bare boolean, so the recipe has to FIND the item it just created. Until
+ * 2026-11-03 it identified items by MEDIA PATH: a before-import snapshot of
+ * the bin's paths, and "first same-path item" at the root / in the tree. Two
+ * items can share a path -- the owner's real case is an untrimmed source clip
+ * that Send to Premiere LINKS IN PLACE (§10.5) and that was already imported
+ * by an earlier send -- and then both looked pre-existing and the first OLD
+ * item won: tagging, colouring and the playhead insert all hit the old item,
+ * old in/out trim included.
+ *
+ * THE RULE: an item is NEW when it is absent BY IDENTITY from the pre-import
+ * snapshot, and identity is `ProjectItem.getId()` -- the only identifier the
+ * Premiere UXP API documents for a project item ("Get id of projectItem",
+ * returns string, Since 25.6, on the ProjectItem BASE class; this manifest
+ * requires 26.3; Adobe's own premiere-api sample, projectPanel.ts, calls it
+ * un-awaited on a raw item from rootItem.getItems()). It is read off the RAW
+ * item (the documented receiver) and, for collectClips' cast-only handles,
+ * through `ProjectItem.cast(clip)`; awaited in case a build returns a promise.
+ *
+ * NOT object identity ("absent by reference"): nothing documents a UXP item
+ * wrapper as the SAME JS object across two getItems() calls, and the cast()
+ * wrappers every lookup uses are minted per call. If references were fresh
+ * per enumeration, every item would look new and the old item would be
+ * picked while being labeled "new" -- the bug, hidden. Not a composite
+ * (name/label/in-out) either: a re-send of an untouched earlier import is
+ * indistinguishable from it on every one of those fields.
+ *
+ * VERIFY(spike-S6-followup): getId() has never been probed live by this
+ * panel. Degradation is explicit and conservative: if ANY snapshotted clip's
+ * id is unreadable, or two distinct items in one listing share an id (so it
+ * is not an identity), the snapshot is marked untrusted and every lookup
+ * falls back to the pre-2026-11-03 path behaviour, with one log line per
+ * session saying so. Collision-free cases (no other item references the
+ * file) pick the same item under either rule.
+ */
+
+/** Last identity-mode line logged (one line per mode per session). */
+let cprbIdentityModeLogged = '';
+
+function cprbNoteIdentityMode(mode, message) {
+  if (cprbIdentityModeLogged === mode) return;
+  cprbIdentityModeLogged = mode;
+  logDebug(message);
+}
+
+/** `ProjectItem.getId()` as a string key ('id:<value>'), or null when no id
+ * is readable. `handle` is a raw ProjectItem or a cast ClipProjectItem; the
+ * raw receiver is tried first, then `ProjectItem.cast(handle)`. */
+async function cprbItemIdentity(pr, handle) {
+  const read = async (obj) => {
+    if (!obj || typeof obj.getId !== 'function') return '';
+    const value = await obj.getId();
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    return '';
+  };
+  try {
+    const id = await read(handle);
+    if (id) return `id:${id}`;
+  } catch (_) { /* try the cast receiver */ }
+  try {
+    if (pr.ProjectItem && typeof pr.ProjectItem.cast === 'function') {
+      const id = await read(pr.ProjectItem.cast(handle));
+      if (id) return `id:${id}`;
+    }
+  } catch (_) { /* no readable id */ }
+  return null;
+}
+
+/** A snapshot under which every item counts as new (the starting point
+ * cprbSnapshotBeforeImport fills in). */
+function cprbEmptySnapshot() {
+  return { ids: new Set(), binPaths: new Set(), idsTrusted: true };
+}
+
+/**
+ * BEFORE-import snapshot covering every scope a post-import lookup searches:
+ * the target bin's children (uncapped, plus their stored paths for the
+ * legacy rule), the project root's direct children (uncapped), and the same
+ * capped tree walk the last-resort lookup uses (collectClips, 200).
+ * @returns {Promise<{ids: Set<string>, binPaths: Set<string>, idsTrusted: boolean}>}
+ */
+async function cprbSnapshotBeforeImport(pr, project, bin) {
+  const before = cprbEmptySnapshot();
+  let unreadable = 0;
+  let duplicated = false;
+  const record = async (handles) => {
+    const listingIds = new Set();
+    for (const handle of handles) {
+      const key = await cprbItemIdentity(pr, handle);
+      if (!key) { unreadable += 1; continue; }
+      if (listingIds.has(key)) duplicated = true; // two items, one "id"
+      listingIds.add(key);
+      before.ids.add(key);
+    }
+  };
+  if (bin) {
+    try {
+      const raws = [];
+      for (const item of await bin.getItems()) {
+        const clip = pr.ClipProjectItem.cast(item);
+        if (!clip) continue;
+        raws.push(item);
+        try {
+          before.binPaths.add(normalizePathForCompare(await clip.getMediaFilePath()));
+        } catch (_) { /* unreadable item -- skip */ }
+      }
+      await record(raws);
+    } catch (error) {
+      logDebug(`bin snapshot failed (${cprbErrMsg(error)})`);
+      before.idsTrusted = false;
+    }
+  }
+  try {
+    const root = await project.getRootItem();
+    await record((await root.getItems()).filter((item) => pr.ClipProjectItem.cast(item)));
+    await record(await collectClips(pr, project, 200));
+  } catch (error) {
+    logDebug(`project snapshot failed (${cprbErrMsg(error)})`);
+    before.idsTrusted = false;
+  }
+  if (unreadable || duplicated) before.idsTrusted = false;
+  if (before.idsTrusted) {
+    cprbNoteIdentityMode('id', 'item identity: ProjectItem.getId() -- a re-send of a file '
+      + 'already in the project picks the freshly imported item');
+  } else {
+    cprbNoteIdentityMode('path', 'item identity: ProjectItem.getId() '
+      + `${duplicated ? 'is not unique' : 'is unreadable'} on this build -- falling back to `
+      + 'media-path matching (a re-send of a file already in the project may pick the OLDER item)');
+  }
+  return before;
+}
+
+/** true = NEW (absent by identity from `before`), false = pre-existing,
+ * null = undecidable (snapshot untrusted, or this item has no readable id). */
+async function cprbIsNewItem(pr, before, handle) {
+  if (!before || !before.idsTrusted) return null;
+  const key = await cprbItemIdentity(pr, handle);
+  if (!key) return null;
+  return !before.ids.has(key);
+}
+
 /**
  * Finds a ClipProjectItem in `bin` whose stored media path equals `path`,
  * enumerating the BIN's OWN children (S6-C's recorded DECISION -- never
  * findItemsMatchingMediaPath) across retry rounds, because import
- * registration can lag the importFiles call. An item that was NOT in the
- * before-import snapshot wins over a pre-existing same-path item (the
- * re-send case). `raw` is the UN-CAST ProjectItem handle from the bin
- * enumeration -- the insert probe needs it (Adobe's own sample passes raw
- * ProjectItems, never cast wrappers, to SequenceEditor actions).
- * @returns {Promise<null | {clip: object, raw: object, preexisting: boolean}>}
+ * registration can lag the importFiles call. A NEW item (absent by identity
+ * from `before`, see cprbSnapshotBeforeImport) wins over a pre-existing
+ * same-path item -- the re-send case. While identity can decide, a round
+ * that only finds pre-existing same-path items keeps polling (the fresh one
+ * may not be registered yet) and the first pre-existing match is the answer
+ * only after the last round. Undecidable items take the legacy rule ("new"
+ * = path absent from the bin before), which also returns at once. `raw` is
+ * the UN-CAST ProjectItem handle from the bin enumeration -- the insert
+ * probe needs it (Adobe's own sample passes raw ProjectItems, never cast
+ * wrappers, to SequenceEditor actions).
+ * @returns {Promise<null | {clip: object, raw: object, preexisting: boolean|null}>}
+ * `preexisting`: false = new; true = identity says it predates the import;
+ * null = the legacy path rule could not tell (the bin already held this file).
  */
-async function findClipInBin(pr, bin, path, beforePaths, delays) {
+async function findClipInBin(pr, bin, path, before, delays) {
   const rounds = delays || [0, 500, 1500, 3000];
+  let preexistingMatch = null;
   for (const delay of rounds) {
     if (delay) await sleep(delay);
     let items;
@@ -279,49 +432,74 @@ async function findClipInBin(pr, bin, path, beforePaths, delays) {
       items = await bin.getItems();
     } catch (error) {
       logDebug(`bin enumeration failed (${error && error.message ? error.message : error})`);
-      return null;
+      return preexistingMatch;
     }
-    let preexistingMatch = null;
+    let roundMatch = null;
+    let undecided = false;
     for (const item of items) {
       const clip = pr.ClipProjectItem.cast(item);
       if (!clip) continue;
       let stored = '';
       try { stored = await clip.getMediaFilePath(); } catch (_) { continue; }
       if (!samePath(stored, path)) continue;
-      if (!beforePaths.has(normalizePathForCompare(stored))) {
-        return { clip, raw: item, preexisting: false };
+      const isNew = await cprbIsNewItem(pr, before, item);
+      if (isNew === true) return { clip, raw: item, preexisting: false };
+      if (isNew === null) {
+        // Legacy path rule: a path the bin did not hold before is new; one
+        // it did hold is AMBIGUOUS (this item, or an older same-file one).
+        undecided = true;
+        if (!before.binPaths.has(normalizePathForCompare(stored))) {
+          return { clip, raw: item, preexisting: false };
+        }
       }
-      if (!preexistingMatch) preexistingMatch = { clip, raw: item, preexisting: true };
+      if (!roundMatch) roundMatch = { clip, raw: item, preexisting: isNew === false ? true : null };
     }
-    if (preexistingMatch) return preexistingMatch;
+    if (roundMatch && !preexistingMatch) preexistingMatch = roundMatch;
+    if (preexistingMatch && undecided) return preexistingMatch;
   }
-  return null;
+  return preexistingMatch;
 }
 
 /** Finds a same-path clip among the project ROOT's direct children (where an
  * untargeted import lands), then -- last resort -- anywhere in the tree.
- * @returns {Promise<null | {clip: object, raw: object|null}>} `raw` is the
- * un-cast ProjectItem when the scan had one (the collectClips fallback
- * yields cast handles only, so raw is null there). */
-async function findClipAtRoot(pr, project, path) {
+ * Same identity rule as findClipInBin: a NEW item anywhere beats a
+ * pre-existing one (the user's own original clip often sits at the root);
+ * an undecidable item is taken as found, exactly as before 2026-11-03; a
+ * pre-existing match is returned only when no new or undecidable one exists.
+ * @returns {Promise<null | {clip: object, raw: object|null, preexisting: boolean|null}>}
+ * `raw` is the un-cast ProjectItem when the scan had one (the collectClips
+ * fallback yields cast handles only, so raw is null there); `preexisting`
+ * is null when identity could not decide. */
+async function findClipAtRoot(pr, project, path, before) {
+  let preexistingMatch = null;
+  const judge = async (handle, clip, raw) => {
+    const isNew = await cprbIsNewItem(pr, before, handle);
+    if (isNew !== false) return { clip, raw, preexisting: isNew === null ? null : false };
+    if (!preexistingMatch) preexistingMatch = { clip, raw, preexisting: true };
+    return null;
+  };
   try {
     const root = await project.getRootItem();
     for (const item of await root.getItems()) {
       const clip = pr.ClipProjectItem.cast(item);
       if (!clip) continue;
       try {
-        if (samePath(await clip.getMediaFilePath(), path)) return { clip, raw: item };
-      } catch (_) { /* skip unreadable items */ }
+        if (!samePath(await clip.getMediaFilePath(), path)) continue;
+      } catch (_) { continue; /* skip unreadable items */ }
+      const found = await judge(item, clip, item);
+      if (found) return found;
     }
     for (const clip of await collectClips(pr, project, 200)) {
       try {
-        if (samePath(await clip.getMediaFilePath(), path)) return { clip, raw: null };
-      } catch (_) { /* ditto */ }
+        if (!samePath(await clip.getMediaFilePath(), path)) continue;
+      } catch (_) { continue; /* ditto */ }
+      const found = await judge(clip, clip, null);
+      if (found) return found;
     }
   } catch (error) {
     logDebug(`root scan failed (${error && error.message ? error.message : error})`);
   }
-  return null;
+  return preexistingMatch;
 }
 
 /**
@@ -330,10 +508,11 @@ async function findClipAtRoot(pr, project, path) {
  * 2026-07-24 live run imported straight into the bin, so this path never
  * ran) -- each shape below is speculative; a throw moves to the next shape,
  * and after a transaction reports success the bin is re-enumerated to
- * CONFIRM before claiming the move happened.
+ * CONFIRM before claiming the move happened. `before` is importIntoBin's
+ * pre-import snapshot (see cprbSnapshotBeforeImport).
  * @returns {Promise<boolean>} true only on a CONFIRMED move.
  */
-async function moveItemIntoBin(pr, project, bin, item, path) {
+async function moveItemIntoBin(pr, project, bin, item, path, before) {
   const shapes = [];
   if (typeof bin.createMoveItemAction === 'function') {
     shapes.push({ name: 'bin.createMoveItemAction(item)', make: () => bin.createMoveItemAction(item) });
@@ -360,8 +539,11 @@ async function moveItemIntoBin(pr, project, bin, item, path) {
         logDebug(`move via ${shape.name}: transaction returned false`);
         continue;
       }
-      const confirmed = await findClipInBin(pr, bin, path, new Set(), [0, 500]);
-      if (confirmed) {
+      // Confirm against the PRE-IMPORT snapshot: only an item that is new by
+      // identity counts, so an older same-file item already in the bin can
+      // never pass for the moved one.
+      const confirmed = await findClipInBin(pr, bin, path, before, [0, 500]);
+      if (confirmed && confirmed.preexisting !== true) {
         logDebug(`moved into the bin via ${shape.name}`);
         return true;
       }
@@ -386,23 +568,11 @@ async function moveItemIntoBin(pr, project, bin, item, path) {
  *   handle when the recovery path had one (the insert probe wants both).
  */
 async function importIntoBin(pr, project, bin, path) {
-  // BEFORE-import snapshot of the bin's stored paths: lets the finder prefer
-  // the freshly-imported item and name the "this file was already in the
-  // bin" re-send case.
-  const beforePaths = new Set();
-  if (bin) {
-    try {
-      for (const item of await bin.getItems()) {
-        const clip = pr.ClipProjectItem.cast(item);
-        if (!clip) continue;
-        try {
-          beforePaths.add(normalizePathForCompare(await clip.getMediaFilePath()));
-        } catch (_) { /* unreadable item -- skip */ }
-      }
-    } catch (error) {
-      logDebug(`bin snapshot failed (${error && error.message ? error.message : error})`);
-    }
-  }
+  // BEFORE-import identity snapshot (bin, root, capped tree): lets every
+  // finder below prefer the freshly-imported item over an older one that
+  // references the SAME file, and name the "this file was already in the
+  // bin" case. See cprbSnapshotBeforeImport for the identity rule.
+  const before = await cprbSnapshotBeforeImport(pr, project, bin);
 
   const restoreIngest = await disableIngestBestEffort(pr, project);
   let imported = false;
@@ -451,23 +621,45 @@ async function importIntoBin(pr, project, bin, path) {
   }
 
   // Recover the item handle: the bin's own children first...
+  let oldInBin = null;
   if (bin) {
-    const found = await findClipInBin(pr, bin, path, beforePaths);
-    if (found) {
-      if (found.preexisting && !importedDirect) {
-        logDebug('this file was already in the bin -- using the existing item');
+    const found = await findClipInBin(pr, bin, path, before);
+    if (found && found.preexisting !== true) {
+      if (found.preexisting === null) {
+        logDebug(importedDirect
+          ? 'this file is in the bin more than once and item identity is unavailable -- '
+            + 'using the first match (it may be the OLDER item)'
+          : 'this file was already in the bin -- using the existing item');
       }
       return { imported: true, item: found.clip, raw: found.raw, where: 'bin' };
     }
+    // null, or an item identity PROVES predates this import: the fresh one
+    // may have landed at the root instead -- look there before settling.
+    oldInBin = found;
   }
   // ...then the project root (import landed there instead), with a move
-  // attempt when we do have a bin.
-  const atRoot = await findClipAtRoot(pr, project, path);
-  if (atRoot) {
-    if (bin && (await moveItemIntoBin(pr, project, bin, atRoot.clip, path))) {
+  // attempt when we do have a bin. A NEW item there beats an old bin item.
+  const atRoot = await findClipAtRoot(pr, project, path, before);
+  if (atRoot && !(oldInBin && atRoot.preexisting !== false)) {
+    if (atRoot.preexisting === true) {
+      // Identity-decided: no new item anywhere, only one that predates this
+      // import (often the user's own original clip) -- use it, but never
+      // move the user's item into the results bin.
+      logDebug('no new item for this file appeared -- using the one already in the project '
+        + '(left where it is; its own in/out and label apply)');
+      return { imported: true, item: atRoot.clip, raw: atRoot.raw, where: 'root' };
+    }
+    if (bin && (await moveItemIntoBin(pr, project, bin, atRoot.clip, path, before))) {
       return { imported: true, item: atRoot.clip, raw: atRoot.raw, where: 'moved' };
     }
     return { imported: true, item: atRoot.clip, raw: atRoot.raw, where: 'root' };
+  }
+  if (oldInBin) {
+    // Identity-decided: importFiles said true, yet no NEW item for this
+    // file registered anywhere within the retry window.
+    logDebug('no new item for this file appeared in the bin -- using the one already there '
+      + '(its own in/out and label apply)');
+    return { imported: true, item: oldInBin.clip, raw: oldInBin.raw, where: 'bin' };
   }
   // importFiles said true but nothing matches the path anywhere -- the
   // S6-C "PARTIAL" shape (typically a path not visible on this machine).

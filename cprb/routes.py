@@ -89,6 +89,21 @@ _FS_LIST_MAX_ENTRIES = 500
 #: hazard, same fix, and same 5 s value as `_FRAMES_DIR_TIMEOUT_SECONDS` /
 #: `_EXPORT_STAT_TIMEOUT_SECONDS` below; on timeout the route answers
 #: (400, or `exists: null` for `timeline_dir`) instead of hanging.
+#: 2026-11-03: `fs/list?dir=ROOTS` (:func:`_fs_list_roots` -- drive-letter
+#: and /Volumes probes) joined this list; it used to run inline.
+#:
+#: What the bound does NOT do: `asyncio.wait_for` stops WAITING, it cannot
+#: cancel a thread stuck inside a kernel filesystem call. The abandoned
+#: worker keeps running until the OS gives up on the share, and it occupies
+#: one slot of the event loop's default executor (shared with the rest of
+#: ComfyUI) meanwhile. There is deliberately no extra concurrency cap here;
+#: each retry against the same dead share can park one more thread until the
+#: OS-level timeout frees them. The loop itself stays responsive throughout.
+#: Every `wait_for` timeout below is caught as `(TimeoutError, asyncio.TimeoutError)`:
+#: on Python 3.10 -- still allowed by pyproject -- `asyncio.wait_for` raises
+#: `asyncio.TimeoutError`, a DISTINCT class until 3.11 made it an alias of the
+#: builtin (RELEASE-REVIEW follow-up, 2026-11-03). A bare `except TimeoutError`
+#: let a slow share turn into a 500 there instead of the documented 400.
 _FS_IO_TIMEOUT_SECONDS = 5.0
 
 
@@ -276,6 +291,11 @@ def _fs_list_roots(context: BridgeContext, *, windows: bool) -> list[dict[str, s
     then platform roots"). 2026-07-19: previously POSIX's ``ROOTS`` resolved
     straight to a real listing of ``/``; this labeled-roots shape (already
     used on Windows) now applies uniformly on every platform.
+
+    Blocking (path resolution plus every drive/volume probe), so the route
+    runs it on a worker thread bounded by :data:`_FS_IO_TIMEOUT_SECONDS`
+    (2026-11-03) -- the same treatment and monkeypatch seam as
+    :func:`_list_directory_entries`.
     """
     roots = [
         _fs_entry(_FS_LIST_DEFAULT_DIR_LABEL, context.output_dir.resolve()),
@@ -787,7 +807,7 @@ async def _verify_export_path(payload: dict[str, Any]) -> dict[str, Any]:
             asyncio.to_thread(_stat_export_path, kind, payload.get("path")),
             timeout=_EXPORT_STAT_TIMEOUT_SECONDS,
         )
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         logger.warning(
             "cprb: checking whether %r exists took longer than %.0fs — relaying it "
             "unverified",
@@ -839,7 +859,7 @@ async def _handle_plugin_message(
                 asyncio.to_thread(ensure_frames_dir, context),
                 timeout=_FRAMES_DIR_TIMEOUT_SECONDS,
             )
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             logger.warning(
                 "cprb: preparing the Premiere frames directory %s took longer than %.0fs "
                 "(a slow or unreachable share?) — answering the handshake anyway; set %s "
@@ -1028,19 +1048,47 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         with ``dir``+``sep``); ROOTS entries additionally carry ``path``
         (:func:`_fs_entry`). 403 when :data:`FS_LIST_LOCAL_ONLY` and the
         caller isn't loopback; 400 for a relative/non-existent/non-directory
-        ``dir``.
+        ``dir``, and 400 when the listing (ROOTS included) outlasts
+        :data:`_FS_IO_TIMEOUT_SECONDS`.
         """
         if FS_LIST_LOCAL_ONLY and not request_is_loopback(request):
             return error_response(403, "file browsing is host-machine-only — PROTOCOL.md §7.1")
         raw = (request.query.get("dir") or "").strip()
         windows = _is_windows()
         if raw == ROOTS:
+            # OFF THE EVENT LOOP, and bounded -- exactly the directory
+            # branch's treatment below (2026-11-03, release review perf item
+            # 1). Building ROOTS is filesystem work too: it resolves the
+            # output dir + home, probes every drive letter (`exists`) on
+            # Windows and `is_dir`s every /Volumes mount on macOS, and a
+            # disconnected mapped drive or sleeping network mount answers
+            # those probes only after the SMB/NFS timeout -- which, run
+            # inline as it used to be, stalled ALL of ComfyUI just for
+            # opening the picker's top level. Same bound, same 400 shape.
+            try:
+                roots = await asyncio.wait_for(
+                    asyncio.to_thread(_fs_list_roots, context, windows=windows),
+                    timeout=_FS_IO_TIMEOUT_SECONDS,
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning(
+                    "cprb: listing the top level (drives/mounted volumes) took "
+                    "longer than %.0fs (a slow or unreachable share?) — "
+                    "answering 400 instead of stalling the server",
+                    _FS_IO_TIMEOUT_SECONDS,
+                )
+                return error_response(
+                    400,
+                    "listing the top level (drives and mounted volumes) took "
+                    f"longer than {_FS_IO_TIMEOUT_SECONDS:.0f}s (a slow or "
+                    "unreachable share?) -- type a folder path instead",
+                )
             return web.json_response(
                 {
                     "dir": ROOTS,
                     "parent": None,
                     "sep": os.sep,
-                    "dirs": _fs_list_roots(context, windows=windows),
+                    "dirs": roots,
                     "files": [],
                     "truncated": False,
                 }
@@ -1058,7 +1106,7 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
                 asyncio.to_thread(_list_directory_entries, directory, extensions),
                 timeout=_FS_IO_TIMEOUT_SECONDS,
             )
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             logger.warning(
                 "cprb: listing %s took longer than %.0fs (a slow or unreachable "
                 "share?) — answering 400 instead of stalling the server",
@@ -1108,7 +1156,7 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
                 asyncio.to_thread(_existing_reveal_folder, path),
                 timeout=_FS_IO_TIMEOUT_SECONDS,
             )
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             logger.warning(
                 "cprb: checking %s took longer than %.0fs (a slow or unreachable "
                 "share?) — answering 400 instead of stalling the server",
@@ -1202,7 +1250,7 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
                 asyncio.to_thread(_dir_exists, directory),
                 timeout=_FS_IO_TIMEOUT_SECONDS,
             )
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             logger.warning(
                 "cprb: checking whether %s exists took longer than %.0fs (a slow "
                 "or unreachable share?) — reporting exists: null",

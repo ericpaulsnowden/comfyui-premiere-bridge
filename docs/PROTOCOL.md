@@ -343,7 +343,16 @@ runs off the event loop, bounded to **5 s** (2026-08-08 — these routes take
 arbitrary user paths, and a sleeping NAS/UNC share used to stall ALL of
 ComfyUI for the SMB timeout): on timeout `fs/list`/`open_folder` answer
 400 naming the slow path, and `timeline_dir` answers with `exists: null`
-("unverified", never "missing") while still resolving `dir`.
+("unverified", never "missing") while still resolving `dir`. Since
+2026-11-03 this includes `fs/list?dir=ROOTS`, which probes every drive
+letter / `/Volumes` mount and used to run inline: a disconnected mapped
+drive or sleeping network mount now costs that one request a 400 ("listing
+the top level … took longer than 5s"), never the server. The bound is on
+*waiting*, not on the work: a thread blocked inside the OS filesystem call
+cannot be cancelled, so it lingers (occupying one worker of the event loop's
+default executor) until the OS gives up on the share. There is no extra
+concurrency cap; repeated retries against the same dead share can each park
+one such thread until then.
 
 | Route | → |
 |---|---|
@@ -551,6 +560,43 @@ not ready, timeout, dead socket) surfaces only as the node's
 "import manually" summary line. There is no application-level ack in M1 —
 delivery to the socket is the contract; import success/failure lives in
 the plugin's own panel log.
+
+**Which item is "the import" (plugin side; 2026-11-03, release review item
+9).** `importFiles` returns only a boolean, so the panel FINDS the item it
+created — the target bin's children first (retry rounds, for registration
+lag), then the project root's direct children, then a capped (200-clip)
+tree walk — and every later step (tag, colour, playhead insert) acts on
+that item. The same file can legitimately back two items: an untrimmed
+source clip is LINKED IN PLACE (§10.5), so re-sending it re-imports a path
+the project may already hold, possibly as a trimmed, relabelled earlier
+import. Rule, applied identically in all three lookups:
+
+- **Identity is `ProjectItem.getId()`** — the only item identifier the
+  Premiere UXP API documents (ProjectItem base class, Since 25.6, "Get id
+  of projectItem", returns string; the manifest requires 26.3). Read off the
+  raw item, or via `ProjectItem.cast(clip)` for the tree walk's cast-only
+  handles. Not media path (that is the bug), not JS object identity (UXP
+  wrappers are not documented as the same object across enumerations — if
+  they were fresh, every item would look new and the old one would be
+  picked while labelled new), not a name/label/in-out composite (an
+  untouched earlier import matches the fresh one on all of those).
+- **New = absent by identity from a snapshot taken just before
+  `importFiles`**, covering the bin, the root's direct children and the
+  same capped tree walk. A new item anywhere beats a pre-existing one. In
+  the bin, a round that finds only pre-existing same-file items keeps
+  polling; only when no new item appears at all (bin or elsewhere) is the
+  pre-existing one used, with a log line saying so — and a pre-existing
+  item found outside the bin (often the user's own original) is never moved
+  into the results bin. A move into the bin counts as confirmed only when
+  the item that turns up there is new by identity.
+- **Degradation is explicit.** If any snapshotted clip's id is unreadable,
+  or two distinct items in one listing share an id, the snapshot is
+  untrusted and the lookups use the pre-2026-11-03 path rule (first
+  same-file match), announced once per session in the panel log ("falling
+  back to media-path matching"). With no other item referencing the file,
+  both rules pick the same item. `getId()` is not yet proven live
+  (VERIFY flag in `import_recipe.js`); `tests/test_import_recipe_js.py`
+  pins the rule against the real plugin source in a Node VM.
 
 ### §10.4 `export_ready` (plugin → server — M2's inbound half)
 
