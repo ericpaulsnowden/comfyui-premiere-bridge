@@ -431,11 +431,22 @@ function cprbSanitizeStem(raw) {
   return (cleaned || 'frame').slice(0, 40);
 }
 
+/** Ownership marker on every name this file writes into `frames_dir`
+ * (PROTOCOL.md §11.1, RELEASE-REVIEW 2026-09-13 finding #1). `$CPRB_FRAMES_DIR`
+ * lets the folder be redirected to ANY absolute path the server can write
+ * to, including -- by accident -- one that already holds someone else's
+ * images; the server's own retention pass (`cprb.routes._prune_frames_dir`)
+ * uses this exact prefix (mirrored there as `FRAME_OWNERSHIP_PREFIX`) to
+ * tell a bridge export from a stranger's file before it ever deletes
+ * anything. Keep this in sync with that constant -- it is the ONLY thing
+ * that makes ownership provable by name alone. */
+const CPRB_FRAME_OWNERSHIP_PREFIX = 'cprb_';
+
 /** A fresh, unique, extension-selects-the-format filename. `.png` because
  * RESEARCH A has it empirically confirmed as an 8-bit non-interlaced PNG. */
 function cprbUniqueFrameName(stem) {
   cprbFrameSeq += 1;
-  return `${stem}_${Date.now().toString(36)}_${cprbFrameSeq}.png`;
+  return `${CPRB_FRAME_OWNERSHIP_PREFIX}${stem}_${Date.now().toString(36)}_${cprbFrameSeq}.png`;
 }
 
 /** One-time presence probe for the one call this whole feature rests on, so a

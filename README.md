@@ -455,6 +455,13 @@ watch — set the environment variable **`CPRB_FRAMES_DIR`** to any absolute loc
 path before starting ComfyUI, and frames go there instead. ComfyUI's console
 prints the folder it's actually using each time the panel connects.
 
+**The cleanup only ever deletes the bridge's own exports.** Every still the panel
+writes is named `cprb_<sequence>_<timestamp>_<n>.png`, and the newest-200 cleanup
+only considers names with that prefix. So pointing `CPRB_FRAMES_DIR` at a folder
+that already holds your own images is safe: nothing else in it is ever removed,
+however old. Exports from before v0.15.0 had no prefix. Those are still cleaned up,
+but only in the default `premiere_frames/` folder, where nothing else should live.
+
 **Without the panel.** The node runs on any path you type, but nothing fills it
 in, and an empty `path` stops the graph before it queues with a message telling
 you to press the panel button. If you're not running the panel, export a still
