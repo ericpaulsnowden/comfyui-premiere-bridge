@@ -96,7 +96,10 @@ def test_cprb_unique_frame_name_matches_the_python_ownership_regex(
     result = subprocess.run(
         [node_path, str(driver), str(EXPORT_SOURCE_JS), json.dumps(SEQUENCE_NAMES)],
         capture_output=True,
-        text=True,
+        # node writes UTF-8; text=True alone decodes with the locale codec
+        # (cp1252 on Windows), which would garble any non-ASCII and can raise.
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
         check=False,
     )

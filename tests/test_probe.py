@@ -10,6 +10,7 @@ fake container/stream objects that mimic just the attributes
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -88,7 +89,7 @@ def test_probe_frames_unknown_falls_back_to_duration_times_fps(tmp_path: Path) -
 def test_probe_missing_file_raises_probe_error_naming_the_path(tmp_path: Path) -> None:
     missing = tmp_path / "does_not_exist.mp4"
 
-    with pytest.raises(ProbeError, match=str(missing)):
+    with pytest.raises(ProbeError, match=re.escape(str(missing))):
         probe_media(str(missing))
 
 
@@ -96,7 +97,7 @@ def test_probe_unreadable_file_raises_probe_error_naming_the_path(tmp_path: Path
     garbage = tmp_path / "not_really_a_video.mp4"
     garbage.write_bytes(b"this is not a video file, just plain bytes")
 
-    with pytest.raises(ProbeError, match=str(garbage)):
+    with pytest.raises(ProbeError, match=re.escape(str(garbage))):
         probe_media(str(garbage))
 
 

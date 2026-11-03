@@ -681,16 +681,27 @@ def test_prune_ignores_legacy_shaped_names_outside_the_default_dir(
     assert all(p.exists() for p in legacy_paths)
 
 
-def test_prune_never_follows_a_symlink_or_recurses_into_a_subdirectory(
-    context: BridgeContext, tmp_path: Path
-) -> None:
-    """A symlink or a directory named exactly like an export is not a file.
+def _owned_real_exports(frames: Path, count: int = 205) -> list[Path]:
+    """*count* plain, bridge-owned exports with mtimes well after the "oldest"
+    1-2 s given to the impostors in the two tests below, so a forgotten
+    ``is_symlink()``/``is_file()`` check would pick the impostors first."""
+    real_paths = []
+    for i in range(count):
+        path = frames / _owned_name("real", i)
+        path.write_bytes(b"x")
+        os.utime(path, (10_000 + i, 10_000 + i))
+        real_paths.append(path)
+    return real_paths
 
-    Both are given the OLDEST mtimes of anything present, so a check that
-    forgot ``is_symlink()``/``is_file()`` would pick them first. The
-    symlink's target — deliberately OUTSIDE the frames directory — must
-    also survive: ``unlink()`` on a symlink only ever removes the link
-    itself, but the point is this code must never even try.
+
+def test_prune_never_follows_a_symlink(context: BridgeContext, tmp_path: Path) -> None:
+    """A symlink named exactly like an export is not a file.
+
+    It is given the OLDEST mtime of anything present, so a check that forgot
+    ``is_symlink()`` would pick it first. The symlink's target -- deliberately
+    OUTSIDE the frames directory -- must also survive: ``unlink()`` on a
+    symlink only ever removes the link itself, but the point is this code must
+    never even try.
     """
     frames = cprb_routes.ensure_frames_dir(context)
 
@@ -699,34 +710,55 @@ def test_prune_never_follows_a_symlink_or_recurses_into_a_subdirectory(
     victim = victim_dir / "precious.png"
     victim.write_bytes(b"do not delete me")
 
-    symlink_name = _owned_name("link", 0)
-    symlink_path = frames / symlink_name
-    symlink_path.symlink_to(victim)
-    os.utime(symlink_path, (1, 1), follow_symlinks=False)
+    symlink_path = frames / _owned_name("link", 0)
+    try:
+        symlink_path.symlink_to(victim)
+    except (OSError, NotImplementedError) as exc:
+        # Windows without Developer Mode / the symlink privilege (and some
+        # filesystems) cannot create one; nothing to prune-test then.
+        pytest.skip(f"cannot create a symlink on this host: {exc}")
+    # `stat()` FOLLOWS a link, so the mtime a forgotten `is_symlink()` check
+    # would sort by is the TARGET's: make that the oldest in the pool. (Plain
+    # `os.utime` on the victim works on every OS.)
+    os.utime(victim, (1, 1))
+    # Where the platform can also stamp the link itself (POSIX), do that too so
+    # an `lstat()`-based check is fooled the same way. Windows has no
+    # `follow_symlinks=False` for `os.utime` (NotImplementedError there).
+    if os.utime in os.supports_follow_symlinks:
+        os.utime(symlink_path, (1, 1), follow_symlinks=False)
 
-    subdir_name = _owned_name("dir", 0)
-    subdir_path = frames / subdir_name
-    subdir_path.mkdir()
-    nested = subdir_path / "sneaky.png"
-    nested.write_bytes(b"should never be visited")
-    os.utime(subdir_path, (2, 2))
-
-    # Enough real owned files to force pruning past the two impostors above.
-    real_paths = []
-    for i in range(205):
-        path = frames / _owned_name("real", i)
-        path.write_bytes(b"x")
-        os.utime(path, (10_000 + i, 10_000 + i))
-        real_paths.append(path)
+    # Enough real owned files to force pruning past the impostor above.
+    real_paths = _owned_real_exports(frames)
 
     removed = cprb_routes._prune_frames_dir(frames, keep=cprb_routes.FRAMES_KEEP_NEWEST)
 
     assert removed == 5  # only the 5 oldest REAL files
     assert symlink_path.is_symlink()  # untouched
     assert victim.exists()  # target never touched either
+    survivors = {p.name for p in frames.glob("*.png") if p.is_file() and not p.is_symlink()}
+    assert survivors == {p.name for p in real_paths[5:]}
+
+
+def test_prune_never_recurses_into_a_subdirectory(context: BridgeContext) -> None:
+    """A directory named exactly like an export is not a file, and nothing
+    below it is ever visited. It is given the OLDEST mtime of anything present,
+    so a check that forgot ``is_file()`` would pick it first."""
+    frames = cprb_routes.ensure_frames_dir(context)
+
+    subdir_path = frames / _owned_name("dir", 0)
+    subdir_path.mkdir()
+    nested = subdir_path / "sneaky.png"
+    nested.write_bytes(b"should never be visited")
+    os.utime(subdir_path, (2, 2))
+
+    real_paths = _owned_real_exports(frames)
+
+    removed = cprb_routes._prune_frames_dir(frames, keep=cprb_routes.FRAMES_KEEP_NEWEST)
+
+    assert removed == 5  # only the 5 oldest REAL files
     assert subdir_path.is_dir()  # untouched
     assert nested.exists()  # never recursed into
-    survivors = {p.name for p in frames.glob("*.png") if p.is_file() and not p.is_symlink()}
+    survivors = {p.name for p in frames.glob("*.png") if p.is_file()}
     assert survivors == {p.name for p in real_paths[5:]}
 
 

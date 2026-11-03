@@ -364,6 +364,9 @@ async def test_fs_list_roots_sentinel_is_still_loopback_only(client, monkeypatch
 async def test_fs_list_roots_sentinel_includes_default_dir_and_home_on_posix(
     client, context: BridgeContext
 ) -> None:
+    # No seams patched: runs the host's REAL platform tail (drive probes on
+    # Windows, /Volumes on macOS) as a smoke test. Only the two entries every
+    # host shares are asserted.
     response = await client.get("/cprb/fs/list", params={"dir": "ROOTS"})
     data = await response.json()
     assert data["dir"] == "ROOTS"
@@ -377,34 +380,74 @@ async def test_fs_list_roots_sentinel_includes_default_dir_and_home_on_posix(
 async def test_fs_list_roots_sentinel_lists_macos_volumes_when_monkeypatched(
     client, monkeypatch
 ) -> None:
-    monkeypatch.setattr(
-        cprb_routes, "_list_macos_volumes", lambda: ["/Volumes/Macintosh HD", "/Volumes/Backup"]
-    )
+    # `_is_windows` is pinned to False so the POSIX branch runs on EVERY host:
+    # on a real Windows machine the ROOTS tail is the drive list instead and
+    # `_list_macos_volumes` is never consulted (this test used to depend on
+    # the host happening to be macOS/Linux). Each entry's `path` is
+    # `str(Path(raw))`, which is `\Volumes\...` on a Windows host, so the
+    # expectation is built from the same primitive rather than typed as a
+    # POSIX literal; `name` is `Path(raw).name`, identical on every OS.
+    monkeypatch.setattr(cprb_routes, "_is_windows", lambda: False)
+    volumes = ["/Volumes/Macintosh HD", "/Volumes/Backup"]
+    monkeypatch.setattr(cprb_routes, "_list_macos_volumes", lambda: list(volumes))
     response = await client.get("/cprb/fs/list", params={"dir": "ROOTS"})
     data = await response.json()
+    assert [entry["name"] for entry in data["dirs"]] == [
+        "ComfyUI Output", "Home", "Macintosh HD", "Backup"
+    ]
     by_name = {entry["name"]: entry["path"] for entry in data["dirs"]}
-    assert by_name["Macintosh HD"] == "/Volumes/Macintosh HD"
-    assert by_name["Backup"] == "/Volumes/Backup"
+    assert by_name["Macintosh HD"] == str(Path("/Volumes/Macintosh HD"))
+    assert by_name["Backup"] == str(Path("/Volumes/Backup"))
+
+
+def _listable_fs_root(tmp_path: Path) -> Path:
+    """A REAL, listable filesystem root on this host: ``/`` on POSIX, the
+    drive root the temp dir lives on (``C:\\``) on Windows. A bare ``"/"`` is
+    not absolute on Windows (no drive), so the route would answer 400 there.
+    """
+    return Path(tmp_path.anchor)
 
 
 async def test_fs_list_drive_root_parent_climbs_to_roots_under_monkeypatched_windows(
-    client, monkeypatch
+    client, monkeypatch, tmp_path: Path
 ) -> None:
-    # "/" doubles as our only real, listable filesystem root on this test
-    # machine — `_is_windows` alone decides which label a root's parent
-    # gets, so patching just that seam is enough to exercise the branch.
+    # A real, listable root doubles as the "drive root" on any host --
+    # `_is_windows` alone decides which label a root's parent gets, so
+    # patching just that seam is enough to exercise the branch.
+    root = _listable_fs_root(tmp_path)
     monkeypatch.setattr(cprb_routes, "_is_windows", lambda: True)
-    response = await client.get("/cprb/fs/list", params={"dir": "/"})
+    response = await client.get("/cprb/fs/list", params={"dir": str(root)})
     data = await response.json()
-    assert data["dir"] == "/"
+    assert response.status == 200, data
+    assert data["dir"] == str(root)
     assert data["parent"] == "ROOTS"
 
 
-async def test_fs_list_posix_root_parent_is_null_without_monkeypatching(client) -> None:
-    response = await client.get("/cprb/fs/list", params={"dir": "/"})
+async def test_fs_list_posix_root_parent_is_null_when_not_windows(
+    client, monkeypatch, tmp_path: Path
+) -> None:
+    # Pinned to the non-Windows branch so it holds on a Windows host too
+    # (where the real `_is_windows` would, correctly, answer "ROOTS").
+    root = _listable_fs_root(tmp_path)
+    monkeypatch.setattr(cprb_routes, "_is_windows", lambda: False)
+    response = await client.get("/cprb/fs/list", params={"dir": str(root)})
     data = await response.json()
-    assert data["dir"] == "/"
+    assert response.status == 200, data
+    assert data["dir"] == str(root)
     assert data["parent"] is None
+
+
+async def test_fs_list_root_parent_follows_the_real_host_without_monkeypatching(
+    client, tmp_path: Path
+) -> None:
+    # No seams patched: whatever the real host is, a filesystem root's parent
+    # is the drive list on Windows and null everywhere else.
+    root = _listable_fs_root(tmp_path)
+    response = await client.get("/cprb/fs/list", params={"dir": str(root)})
+    data = await response.json()
+    assert response.status == 200, data
+    assert data["dir"] == str(root)
+    assert data["parent"] == ("ROOTS" if os.name == "nt" else None)
 
 
 def test_is_unc_share_root_detects_a_share_root() -> None:

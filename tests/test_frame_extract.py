@@ -11,6 +11,7 @@ missing/unreadable-file cases need no real, decodable media at all.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -115,7 +116,7 @@ def test_extract_frame_missing_file_raises_value_error_naming_the_path(tmp_path:
     pytest.importorskip("torch", reason=_TORCH_REASON)
     missing = tmp_path / "does_not_exist.mp4"
 
-    with pytest.raises(ValueError, match=str(missing)):
+    with pytest.raises(ValueError, match=re.escape(str(missing))):
         extract_frame(str(missing), in_seconds=0.0)
 
 
@@ -125,5 +126,5 @@ def test_extract_frame_unreadable_file_raises_value_error_naming_the_path(tmp_pa
     garbage = tmp_path / "not_really_a_video.mp4"
     garbage.write_bytes(b"this is not a video file, just plain bytes")
 
-    with pytest.raises(ValueError, match=str(garbage)):
+    with pytest.raises(ValueError, match=re.escape(str(garbage))):
         extract_frame(str(garbage), in_seconds=0.0)

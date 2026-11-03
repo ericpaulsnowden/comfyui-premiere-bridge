@@ -204,13 +204,13 @@ def test_execute_rerun_with_same_sequence_name_overwrites_in_place(
         sequence_name="Rerun", fps="24", paths=str(clip_a), write_edl=False, write_otio=False
     )
     xml_path_1 = result_1["result"][0]
-    content_1 = Path(xml_path_1).read_text()
+    content_1 = Path(xml_path_1).read_text(encoding="utf-8")
 
     result_2 = node.execute(
         sequence_name="Rerun", fps="24", paths=str(clip_b), write_edl=False, write_otio=False
     )
     xml_path_2 = result_2["result"][0]
-    content_2 = Path(xml_path_2).read_text()
+    content_2 = Path(xml_path_2).read_text(encoding="utf-8")
 
     assert xml_path_1 == xml_path_2, "same sequence_name must resolve to the same .xml path"
     assert content_1 != content_2, "the second run's content must reflect the new inputs"
@@ -260,7 +260,7 @@ def test_execute_write_otio_success_writes_otio_file_and_lists_it(
 
     otio_path = context.output_dir / "premiere_timelines" / "Otio Ok" / "Otio Ok.otio"
     assert otio_path.exists()
-    assert otio_path.read_text() == '{"OTIO_SCHEMA": "Timeline.1"}'
+    assert otio_path.read_text(encoding="utf-8") == '{"OTIO_SCHEMA": "Timeline.1"}'
     assert any(str(otio_path) in line for line in result["ui"]["text"])
 
 
@@ -290,7 +290,7 @@ def test_execute_happy_path_writes_expected_files_with_edl(
     assert media_path.exists()
     assert video_1.save_to_calls == [str(media_path)]
 
-    xml_text = xml_path.read_text()
+    xml_text = xml_path.read_text(encoding="utf-8")
     assert "<name>001_video_1</name>" in xml_text
     assert "<name>extra</name>" in xml_text
 
@@ -313,8 +313,8 @@ def test_execute_media_link_references_original_path_without_copying(
     # Zero-copy: nothing was ever written into media/ for a linked paths entry.
     assert not (out_dir / "media").exists()
 
-    xml_text = (out_dir / "Link Mode.xml").read_text()
-    edl_text = (out_dir / "Link Mode.edl").read_text()
+    xml_text = (out_dir / "Link Mode.xml").read_text(encoding="utf-8")
+    edl_text = (out_dir / "Link Mode.edl").read_text(encoding="utf-8")
     assert "<name>clipA</name>" in xml_text
     assert f"* SOURCE FILE: {clip}" in edl_text
 
@@ -353,8 +353,8 @@ def test_execute_media_collect_copies_into_media_and_references_the_copy(
     assert copied.exists()
     assert copied.read_bytes() == b"original-bytes"
 
-    xml_text = (out_dir / "Collect Mode.xml").read_text()
-    edl_text = (out_dir / "Collect Mode.edl").read_text()
+    xml_text = (out_dir / "Collect Mode.xml").read_text(encoding="utf-8")
+    edl_text = (out_dir / "Collect Mode.edl").read_text(encoding="utf-8")
     assert "<name>001_clipB</name>" in xml_text
     assert f"* SOURCE FILE: {copied}" in edl_text
     assert str(clip) not in edl_text  # the ORIGINAL path must not leak into output

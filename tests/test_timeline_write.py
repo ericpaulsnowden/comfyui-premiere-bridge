@@ -236,17 +236,17 @@ def test_build_xmeml_rejects_unknown_fps() -> None:
 
 def test_build_xmeml_matches_golden_24() -> None:
     text = build_xmeml("Two Clips", "24", _two_clips())
-    assert text == (GOLDEN_DIR / "two_clips_24.xml").read_text()
+    assert text == (GOLDEN_DIR / "two_clips_24.xml").read_text(encoding="utf-8")
 
 
 def test_build_xmeml_matches_golden_2997_drop_frame() -> None:
     text = build_xmeml("Two Clips", "29.97", _two_clips())
-    assert text == (GOLDEN_DIR / "two_clips_2997.xml").read_text()
+    assert text == (GOLDEN_DIR / "two_clips_2997.xml").read_text(encoding="utf-8")
 
 
 def test_build_edl_matches_golden_24() -> None:
     text = build_edl("Two Clips", "24", _two_clips())
-    assert text == (GOLDEN_DIR / "two_clips_24.edl").read_text()
+    assert text == (GOLDEN_DIR / "two_clips_24.edl").read_text(encoding="utf-8")
 
 
 # --- OTIO (soft dependency) --------------------------------------------------
