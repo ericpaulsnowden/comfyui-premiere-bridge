@@ -203,6 +203,42 @@ async def test_second_connection_supersedes_the_first_with_close_4000(client) ->
     await _wait_until(lambda: cprb_routes._connection is None)
 
 
+async def test_overlapping_replacements_leave_exactly_the_newest_connection_open(
+    client,
+) -> None:
+    """B and C both connect while A's close is still in flight. The newest (C)
+    must own the slot, and B -- displaced -- must be closed 4000, not left open
+    outside the slot."""
+    await client.ws_connect("/cprb/ws")
+    await _wait_until(lambda: cprb_routes._connection is not None)
+    server_a = cprb_routes._connection.ws
+
+    release = asyncio.Event()
+    real_close = server_a.close
+
+    async def slow_close(*args, **kwargs):
+        await release.wait()
+        return await real_close(*args, **kwargs)
+
+    server_a.close = slow_close
+
+    ws_b = await client.ws_connect("/cprb/ws")
+    await asyncio.sleep(0.05)  # B's handler is now parked inside A's close
+    ws_c = await client.ws_connect("/cprb/ws")
+    await asyncio.sleep(0.05)
+    release.set()
+
+    msg_b = await asyncio.wait_for(ws_b.receive(), timeout=2.0)
+    assert msg_b.type == aiohttp.WSMsgType.CLOSE and msg_b.data == 4000
+    await _handshake(ws_c)
+    assert ws_c.closed is False
+    assert cprb_routes._connection is not None
+    assert cprb_routes._connection.ready is True
+
+    await ws_c.close()
+    await _wait_until(lambda: cprb_routes._connection is None)
+
+
 async def test_disconnect_clears_the_slot(client) -> None:
     ws = await client.ws_connect("/cprb/ws")
     await _wait_until(lambda: cprb_routes._connection is not None)

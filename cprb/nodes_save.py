@@ -23,8 +23,10 @@ choices) never requires PyAV to be installed.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +106,26 @@ def set_context(context: BridgeContext) -> None:
     _context = context
 
 
+def write_into_place(dest: Path, write: Any) -> None:
+    """Call ``write(temp_path)``, then move the result onto *dest*.
+
+    *write* never touches *dest* itself: it fills a uniquely named sibling
+    (same directory, so the final ``os.replace`` is atomic; same suffix, so an
+    encoder that picks its container from the extension still works). If it
+    raises, the temp file is removed and a previously saved *dest* is left
+    byte-for-byte intact -- the XML that still references it stays valid.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(dest.parent), prefix=f".{dest.stem}.", suffix=dest.suffix)
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        write(str(tmp_path))
+        os.replace(tmp_path, dest)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def materialize_video(video: Any, dest: Path, *, node_name: str, input_name: str) -> None:
     """Write *video* to *dest* via the VIDEO object's OWN ``save_to``.
 
@@ -133,7 +155,7 @@ def materialize_video(video: Any, dest: Path, *, node_name: str, input_name: str
             f"{node_name}: {input_name} does not support save_to(...) "
             f"(got a {type(video).__name__!r} object, not a ComfyUI VIDEO)"
         )
-    save_to(str(dest))
+    write_into_place(dest, save_to)
 
 
 def _materialize_video(video_dir: Path, index: int, video: Any) -> Path:
@@ -211,7 +233,7 @@ def _iter_path_lines(paths: str) -> list[tuple[int, str]]:
     return result
 
 
-def _collect_media_path(media_dir: Path, number: int, source: Path) -> Path:
+def _collect_media_path(media_dir: Path, number: int, source: Path, taken: set[str]) -> Path:
     """Destination for a COLLECTED ``paths`` entry (§3.2 ``media`` = Collect).
 
     Named like :func:`_materialize_video`'s own convention -- zero-padded
@@ -222,9 +244,21 @@ def _collect_media_path(media_dir: Path, number: int, source: Path) -> Path:
     (the same number a probe failure on this line would cite as "paths line
     N"), so a collected file's name is traceable back to the widget line
     that produced it.
+
+    *taken* holds the (lower-cased) file names this save has already written
+    into ``media/``; the destination never reuses one -- a ``paths`` file
+    named ``video_1.mp4`` on line 1 would otherwise land on the generated
+    ``001_video_1.mp4``. A clash gets ``_2``, ``_3``... before the extension.
+    The chosen name is added to *taken*.
     """
     media_dir.mkdir(parents=True, exist_ok=True)
-    return media_dir / f"{number:03d}_{sanitize_name(source.stem)}{source.suffix}"
+    stem = f"{number:03d}_{sanitize_name(source.stem)}"
+    candidate, attempt = f"{stem}{source.suffix}", 1
+    while candidate.lower() in taken:
+        attempt += 1
+        candidate = f"{stem}_{attempt}{source.suffix}"
+    taken.add(candidate.lower())
+    return media_dir / candidate
 
 
 class PremiereSaveTimeline:
@@ -470,8 +504,10 @@ class PremiereSaveTimeline:
         out_dir = _context.timeline_dir(sequence_name, output_dir)
         media_dir = out_dir / "media"
 
+        taken_media_names: set[str] = set()
         for index, video in _video_kwargs(kwargs):
             dest = _materialize_video(media_dir, index, video)
+            taken_media_names.add(dest.name.lower())
             written.append(str(dest))
             try:
                 info = probe_media(str(dest))
@@ -492,8 +528,8 @@ class PremiereSaveTimeline:
                 raise ProbeError(f"paths line {line_no}: {exc}") from exc
 
             if media == MEDIA_COLLECT:
-                dest = _collect_media_path(media_dir, line_no, Path(path))
-                shutil.copy2(path, dest)
+                dest = _collect_media_path(media_dir, line_no, Path(path), taken_media_names)
+                write_into_place(dest, lambda tmp, src=path: shutil.copy2(src, tmp))
                 written.append(str(dest))
                 collected_count += 1
                 clips.append(_clip_from_probe(dest.stem, str(dest), info))

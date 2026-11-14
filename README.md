@@ -187,7 +187,10 @@ also shows a summary of every file it wrote.
 - `media/` — connected VIDEO inputs are written here as mp4, named after the
   **socket** they came from (`003_video_3.mp4`), not after the generation.
   `paths` entries are referenced in place by default, or copied in and numbered
-  by their line if you pick *Collect into folder*.
+  by their line if you pick *Collect into folder* (a name that would clash with
+  another file from the same save gets `_2`, `_3`... added, so nothing is
+  overwritten). Files are written whole or not at all: a failed encode or copy
+  leaves the previous file in place.
 - `<name>.edl` / `<name>.otio` — only when you tick those boxes.
 
 The folder name and file stems are sanitized, so illegal characters in

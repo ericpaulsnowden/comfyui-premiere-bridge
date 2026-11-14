@@ -122,7 +122,14 @@ into Premiere, not a re-import of the same timeline. Full rules in §10.5.
   `NNN_<sanitized name>.mp4`. `paths` entries: LINKED in place under
   `media: "Link in place"` (zero re-encode, zero copy), or COPIED verbatim
   into `media/` under `media: "Collect into folder"` (byte copy, no
-  re-encode). ProRes materialization is a follow-up pending SPIKES §S3.
+  re-encode), named `NNN_<sanitized stem><ext>` with `NNN` = the `paths`
+  line number. Every file one save writes into `media/` gets its own
+  destination: if a collected name equals one already used in the same save
+  (e.g. `video_1` plus a first `paths` line named `video_1.mp4`, both
+  `001_video_1.mp4`), the collected file gets `_2`, `_3`... before its
+  extension — never a silent overwrite. Each media file is written to a
+  temporary sibling and moved into place only on success, so a failed
+  encode/copy leaves a previously saved file untouched. ProRes materialization is a follow-up pending SPIKES §S3.
 - Every clip's duration comes from probing the on-disk file with PyAV
   (frames + native fps); the clip occupies `round(seconds * sequence_fps)`
   sequence frames, and never fewer than ONE (a clip shorter than half a
@@ -522,7 +529,10 @@ bin"). Everything else — frame export, progress, keepalive — is M2+.
   first: the server closes the old socket with code **4000** / message
   `replaced by a new connection` (cpsb's exact convention — the plugin
   treats 4000 as "another panel took over" and does not auto-reconnect),
-  then installs the new one. A superseded socket's late cleanup never
+  then installs the new one — the slot is reserved synchronously, BEFORE
+  the old socket's close is awaited, so overlapping replacements always
+  end with the newest connection in the slot and every displaced socket
+  closed. A superseded socket's late cleanup never
   clears its replacement's slot.
 - Disconnect clears the slot; there is no session state to resume — a
   reconnecting plugin simply re-handshakes from `hello`.
