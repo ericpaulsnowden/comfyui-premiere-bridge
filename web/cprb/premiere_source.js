@@ -63,6 +63,7 @@
 import { app } from '../../../scripts/app.js'
 import { api } from '../../../scripts/api.js'
 import { warn } from './api.js'
+import { collectGraphNodes } from './graph_nodes.js'
 import { getAutoRun } from './settings.js'
 
 /**
@@ -132,9 +133,9 @@ function findWidget(node, name) {
   return node.widgets?.find((w) => w && w.name === name)
 }
 
-/** Every node in the open graph, across both litegraph field spellings. */
+/** Every node in the open graph, subgraph contents included. */
 function graphNodes() {
-  return app.graph?._nodes ?? app.graph?.nodes ?? []
+  return collectGraphNodes(app.graph)
 }
 
 /**

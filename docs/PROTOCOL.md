@@ -125,7 +125,9 @@ into Premiere, not a re-import of the same timeline. Full rules in §10.5.
   re-encode). ProRes materialization is a follow-up pending SPIKES §S3.
 - Every clip's duration comes from probing the on-disk file with PyAV
   (frames + native fps); the clip occupies `round(seconds * sequence_fps)`
-  sequence frames. Sources whose native fps differs from the sequence fps
+  sequence frames, and never fewer than ONE (a clip shorter than half a
+  sequence frame would otherwise round to a zero-length clipitem Premiere
+  cannot place). Sources whose native fps differs from the sequence fps
   are still cut at their real-time length (Premiere plays them at native
   speed inside a conformed sequence).
 - Returns: `timeline_path` (STRING — the `.xml` absolute path) and a UI
