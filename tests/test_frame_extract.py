@@ -12,6 +12,7 @@ missing/unreadable-file cases need no real, decodable media at all.
 from __future__ import annotations
 
 import re
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -128,3 +129,42 @@ def test_extract_frame_unreadable_file_raises_value_error_naming_the_path(tmp_pa
 
     with pytest.raises(ValueError, match=re.escape(str(garbage))):
         extract_frame(str(garbage), in_seconds=0.0)
+
+
+# --- media whose first pts is not zero (MPEG-TS, camera files) ---------------------------
+
+
+def _write_offset_mpegts(path: Path) -> None:
+    """24 frames @ 24 fps, solid gray ``i * 10``, first pts at 10 s (MPEG-TS clock)."""
+    pytest.importorskip("av", reason=_AV_REASON)
+    import av
+    import numpy as np
+
+    container = av.open(str(path), mode="w", format="mpegts")
+    stream = container.add_stream("h264", rate=24, options={"bf": "0", "g": "1"})
+    stream.width = WIDTH
+    stream.height = HEIGHT
+    stream.pix_fmt = "yuv420p"
+    for i in range(24):
+        frame = av.VideoFrame.from_ndarray(
+            np.full((HEIGHT, WIDTH, 3), i * 10, dtype=np.uint8), format="rgb24"
+        ).reformat(format="yuv420p")
+        frame.pts = 10 * 90000 + i * 3750  # MPEG-TS 90 kHz clock
+        frame.time_base = Fraction(1, 90000)
+        for packet in stream.encode(frame):
+            container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+
+
+def test_extract_frame_in_seconds_is_relative_to_stream_start(tmp_path: Path) -> None:
+    pytest.importorskip("torch", reason=_TORCH_REASON)
+    media = tmp_path / "offset.ts"
+    _write_offset_mpegts(media)
+
+    # 0.5 s into a 24 fps clip is frame 12 (gray 120), not frame 0.
+    pixel = float(extract_frame(str(media), 0.5)[0, 0, 0, 0]) * 255.0
+    assert pixel == pytest.approx(120, abs=8)
+    first = float(extract_frame(str(media), 0.0)[0, 0, 0, 0]) * 255.0
+    assert first == pytest.approx(0, abs=8)
