@@ -295,3 +295,59 @@ def test_build_otio_produces_parseable_timeline_json() -> None:
 def test_build_otio_requires_at_least_one_clip() -> None:
     with pytest.raises(ValueError, match="at least one clip"):
         build_otio("Empty", "24", [])
+
+
+# --- sub-frame clips (§3.3: every clip occupies at least one sequence frame) --
+
+
+def _subframe_clips() -> list[ClipSpec]:
+    """A 1-frame 60 fps clip is 0.4 sequence frames at 24 fps, so plain rounding
+    gives 0; the 2-frame one (0.8) rounds to 1 and rides along as a control."""
+    return [
+        ClipSpec(name="one", path="/m/one.mp4", frames=1, fps=60.0, width=64, height=48),
+        ClipSpec(name="two", path="/m/two.mp4", frames=2, fps=60.0, width=64, height=48),
+        ClipSpec(name="tail", path="/m/tail.mp4", frames=24, fps=24.0, width=64, height=48),
+    ]
+
+
+def test_xmeml_subframe_clip_has_positive_length_and_next_clip_follows() -> None:
+    from cprb.timeline_read import parse_timeline
+
+    shots = parse_timeline(build_xmeml("Sub", "24", _subframe_clips())).shots
+    assert len(shots) == 3
+    for shot in shots:
+        assert shot["end"] > shot["start"], f"zero-length clip {shot['name']}"
+    for previous, current in pairwise(shots):
+        assert current["start"] >= previous["end"]
+        assert current["start"] > previous["start"]
+    assert shots[0]["start"] == 0
+
+
+def test_edl_subframe_clip_has_positive_record_length() -> None:
+    text = build_edl("Sub", "24", _subframe_clips())
+    event_lines = [line for line in text.splitlines() if line[:3].isdigit()]
+    assert len(event_lines) == 3
+    records = [(line.split()[-2], line.split()[-1]) for line in event_lines]
+    for record_in, record_out in records:
+        assert record_in != record_out, "zero-length EDL event"
+    for previous, current in pairwise(records):
+        assert previous[1] == current[0]
+
+
+def test_otio_subframe_clip_has_positive_duration() -> None:
+    pytest.importorskip("opentimelineio")
+    try:
+        parsed = json.loads(build_otio("Sub", "24", _subframe_clips()))
+    except RuntimeError as exc:
+        if "any cast" in str(exc):
+            pytest.skip(f"opentimelineio cannot serialize in this environment: {exc}")
+        raise
+    clips = [
+        child
+        for track in parsed["tracks"]["children"]
+        for child in track["children"]
+        if child.get("OTIO_SCHEMA", "").startswith("Clip")
+    ]
+    assert len(clips) == 3
+    for clip in clips:
+        assert clip["source_range"]["duration"]["value"] >= 1

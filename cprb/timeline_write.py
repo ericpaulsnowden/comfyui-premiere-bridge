@@ -165,16 +165,19 @@ def _sequence_positions(
     """``(start, end, duration)`` in SEQUENCE frames, back-to-back from 0.
 
     PROTOCOL.md §3.3: "the clip occupies ``round(seconds * sequence_fps)``
-    sequence frames" where ``seconds = frames / fps`` is the clip's own
+    sequence frames, never fewer than one" where ``seconds = frames / fps`` is the clip's own
     real-world duration -- native fps differences from the sequence rate are
     NOT resampled, only used to compute how many sequence frames the clip's
     real-time length fills. Each clip starts exactly where the previous one
-    ended (§3.1: "back-to-back from 00:00:00:00 on video track 1").
+    ended (§3.1: "back-to-back from 00:00:00:00 on video track 1"). The
+    one-frame floor exists because a clip shorter than half a sequence frame
+    (e.g. 1 frame at 60 fps in a 24 fps sequence) rounds to 0, which would
+    emit a zero-length clipitem Premiere cannot place.
     """
     positions = []
     cursor = 0
     for clip in clips:
-        duration = round((clip.frames / clip.fps) * sequence_fps)
+        duration = max(1, round((clip.frames / clip.fps) * sequence_fps))
         start = cursor
         end = start + duration
         positions.append((start, end, duration))
