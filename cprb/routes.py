@@ -1188,7 +1188,8 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         One plugin at a time: a new connection closes any previous one with
         code 4000 ("replaced by a new connection" — the plugin treats 4000
         as "another panel took over", cpsb's exact supersede convention),
-        then installs itself as :data:`_connection`. On ANY exit the slot is
+        and installs itself as :data:`_connection` BEFORE awaiting that
+        close, so overlapping replacements resolve to the newest. On ANY exit the slot is
         cleared only if it still points at THIS connection — a superseded
         socket's late cleanup must never clobber its replacement.
         """
@@ -1196,12 +1197,14 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
+        # Reserve the slot BEFORE any await: the newest connection always
+        # wins, and a handler parked inside the old socket's close can no
+        # longer install itself over a later arrival.
         previous = _connection
-        if previous is not None:
-            await previous.ws.close(code=4000, message=b"replaced by a new connection")
-
         connection = PluginConnection(ws=ws)
         _connection = connection
+        if previous is not None:
+            await previous.ws.close(code=4000, message=b"replaced by a new connection")
         logger.info("cprb: plugin websocket connected")
         try:
             async for msg in ws:

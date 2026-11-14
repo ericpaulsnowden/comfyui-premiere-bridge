@@ -288,7 +288,7 @@ def test_execute_happy_path_writes_expected_files_with_edl(
     assert xml_path.exists()
     assert edl_path.exists()
     assert media_path.exists()
-    assert video_1.save_to_calls == [str(media_path)]
+    assert len(video_1.save_to_calls) == 1 and Path(media_path).is_file()  # written via a temp sibling, moved into place
 
     xml_text = xml_path.read_text(encoding="utf-8")
     assert "<name>001_video_1</name>" in xml_text
@@ -410,7 +410,7 @@ def test_execute_video_input_materializes_under_media_link(context: BridgeContex
         context.output_dir / "premiere_timelines" / "Video Link" / "media" / "001_video_1.mp4"
     )
     assert media_path.exists()
-    assert video_1.save_to_calls == [str(media_path)]
+    assert len(video_1.save_to_calls) == 1 and Path(media_path).is_file()  # written via a temp sibling, moved into place
 
 
 def test_execute_video_input_materializes_under_media_collect(context: BridgeContext) -> None:
@@ -426,7 +426,7 @@ def test_execute_video_input_materializes_under_media_collect(context: BridgeCon
         context.output_dir / "premiere_timelines" / "Video Collect" / "media" / "001_video_1.mp4"
     )
     assert media_path.exists()
-    assert video_1.save_to_calls == [str(media_path)]
+    assert len(video_1.save_to_calls) == 1 and Path(media_path).is_file()  # written via a temp sibling, moved into place
 
 
 def test_execute_raises_on_unknown_media_value(tmp_path: Path) -> None:
@@ -572,3 +572,83 @@ def test_execute_output_dir_whitespace_only_is_treated_as_empty_without_warning(
     assert Path(result["result"][0]) == expected
     summary = "\n".join(result["ui"]["text"])
     assert "not an absolute path" not in summary
+
+
+# --- media-file safety: unique destinations + never a torn write ---------------
+
+
+class _DistinctVideo:
+    """A VIDEO whose saved bytes identify it."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    def save_to(self, path: str) -> None:
+        Path(path).write_bytes(self.payload)
+
+
+def test_execute_collected_path_never_overwrites_a_generated_clip_with_the_same_name(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    """video_1 -> 001_video_1.mp4; a first paths line named video_1.mp4 would
+    collect to the very same name. Both clips must survive, as distinct files."""
+    clip = _write_path_line(tmp_path, "video_1.mp4", content=b"B-collected")
+    node = PremiereSaveTimeline()
+
+    result = node.execute(
+        sequence_name="Clash", fps="24", paths=str(clip), write_edl=False,
+        write_otio=False, media="Collect into folder",
+        video_1=_DistinctVideo(b"A-generated"),
+    )
+
+    media = context.output_dir / "premiere_timelines" / "Clash" / "media"
+    contents = sorted(p.read_bytes() for p in media.iterdir())
+    assert contents == [b"A-generated", b"B-collected"]
+    xml_text = Path(result["result"][0]).read_text(encoding="utf-8")
+    pathurls = [line for line in xml_text.splitlines() if "<pathurl>" in line]
+    assert len(set(pathurls)) == 2, "the two timeline entries must reference different files"
+
+
+def test_execute_failed_video_write_leaves_the_previous_clip_untouched(
+    context: BridgeContext,
+) -> None:
+    media = context.output_dir / "premiere_timelines" / "Torn" / "media"
+    media.mkdir(parents=True)
+    (media / "001_video_1.mp4").write_bytes(b"complete-old-clip")
+
+    class _Failing:
+        def save_to(self, path: str) -> None:
+            Path(path).write_bytes(b"partial")
+            raise OSError("encoder died")
+
+    with pytest.raises(OSError, match="encoder died"):
+        PremiereSaveTimeline().execute(
+            sequence_name="Torn", fps="24", paths="", write_edl=False,
+            write_otio=False, video_1=_Failing(),
+        )
+
+    assert (media / "001_video_1.mp4").read_bytes() == b"complete-old-clip"
+    assert [p.name for p in media.iterdir()] == ["001_video_1.mp4"], "no temp file left behind"
+
+
+def test_execute_failed_collect_copy_leaves_the_previous_copy_untouched(
+    context: BridgeContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = _write_path_line(tmp_path, "c.mov", content=b"new")
+    media = context.output_dir / "premiere_timelines" / "TornCopy" / "media"
+    media.mkdir(parents=True)
+    (media / "001_c.mov").write_bytes(b"complete-old-copy")
+
+    def _dying_copy(src, dst, **_kw):
+        Path(dst).write_bytes(b"par")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(nodes_save.shutil, "copy2", _dying_copy)
+    with pytest.raises(OSError, match="disk full"):
+        PremiereSaveTimeline().execute(
+            sequence_name="TornCopy", fps="24", paths=str(clip), write_edl=False,
+            write_otio=False, media="Collect into folder",
+        )
+
+    assert (media / "001_c.mov").read_bytes() == b"complete-old-copy"
+    assert [p.name for p in media.iterdir()] == ["001_c.mov"]

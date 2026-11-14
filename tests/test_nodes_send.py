@@ -314,7 +314,7 @@ def test_execute_in_memory_video_is_saved_via_save_to(
     written = Path(result["result"][0])
     assert written.parent == _results_dir(context)
     assert written.suffix == ".mp4"
-    assert video.save_to_calls == [str(written)]
+    assert len(video.save_to_calls) == 1 and Path(written).is_file()  # written via a temp sibling, moved into place
     assert written.exists()
     assert pushes[0]["path"] == str(written)
 
@@ -329,7 +329,7 @@ def test_execute_video_with_only_save_to_uses_the_shared_mechanism(
 
     written = Path(result["result"][0])
     assert written.parent == _results_dir(context)
-    assert video.save_to_calls == [str(written)]
+    assert len(video.save_to_calls) == 1 and Path(written).is_file()  # written via a temp sibling, moved into place
 
 
 def test_execute_trimmed_video_is_materialized_not_linked(
@@ -347,7 +347,7 @@ def test_execute_trimmed_video_is_materialized_not_linked(
     written = Path(result["result"][0])
     assert written != source.resolve()
     assert written.parent == _results_dir(context)
-    assert video.save_to_calls == [str(written)]
+    assert len(video.save_to_calls) == 1 and Path(written).is_file()  # written via a temp sibling, moved into place
 
     summary = "\n".join(result["ui"]["text"])
     assert "trim window" in summary
@@ -362,7 +362,7 @@ def test_execute_video_source_that_no_longer_exists_falls_back_to_save_to(
 
     written = Path(result["result"][0])
     assert written.parent == _results_dir(context)
-    assert video.save_to_calls == [str(written)]
+    assert len(video.save_to_calls) == 1 and Path(written).is_file()  # written via a temp sibling, moved into place
 
 
 def test_execute_never_calls_the_base_class_stream_source_probe(
@@ -375,7 +375,7 @@ def test_execute_never_calls_the_base_class_stream_source_probe(
     result = node.execute(video=video)  # AssertionError inside if it's called
 
     written = Path(result["result"][0])
-    assert video.save_to_calls == [str(written)]
+    assert len(video.save_to_calls) == 1 and Path(written).is_file()  # written via a temp sibling, moved into place
 
 
 def test_execute_video_without_save_to_raises_naming_the_input() -> None:
