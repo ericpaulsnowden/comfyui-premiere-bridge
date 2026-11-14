@@ -393,16 +393,17 @@ def build_otio(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]) -> s
     Builds one V1 video track via the public ``opentimelineio`` API
     (``Timeline``/``Track``/``Clip``/``ExternalReference`` +
     ``opentime.RationalTime``/``TimeRange``). Per OTIO semantics,
-    ``Clip.source_range`` is expressed in the MEDIA REFERENCE's own time
-    coordinates -- NOT the parent timeline's -- so each clip's
-    ``source_range`` is the full source at its NATIVE fps, identical to the
-    reference's ``available_range`` (v1 always cuts whole files; a
-    sequence-fps range could exceed ``available_range`` for conformed rates
-    and would be semantically wrong). Timeline placement needs no explicit
-    start frames: OTIO derives it from track composition order, and each
-    clip's real-time length is preserved automatically
-    (``frames / native_fps`` -- the same seconds :func:`build_xmeml`'s §3.3
-    math rounds into sequence frames). The SEQUENCE rate still appears in
+    Each clip's ``source_range`` starts at 0 and lasts exactly the
+    :func:`_sequence_positions` duration, written as a ``RationalTime`` at
+    the SEQUENCE rate (whole sequence frames). Chosen over native-rate
+    ``RationalTime`` because OTIO derives timeline placement from the
+    ``source_range`` durations, so this is what makes the clips land on the
+    same frames as :func:`build_xmeml`/:func:`build_edl` (§3.3: never fewer
+    than one sequence frame -- a native 1-frame 60 fps clip would otherwise
+    take 0.4 sequence frames). A ``RationalTime``'s rate is only a unit
+    (value/rate seconds), so this stays valid in the media's own timeline;
+    it differs from the reference's ``available_range`` (kept at the full
+    native source) only by the §3.3 rounding. The SEQUENCE rate also appears in
     the document as the ``Timeline``'s ``global_start_time`` (frame 0 at the
     §4.2 sequence fps -- the same "starts at 00:00:00:00, at sequence rate"
     fact xmeml's ``<timecode>`` block encodes). ``target_url`` reuses
@@ -421,6 +422,11 @@ def build_otio(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]) -> s
         ValueError: *clips* is empty, or *fps_key* isn't a recognized rate.
         ImportError: ``opentimelineio`` is not installed.
     """
+    return _build_otio_timeline(sequence_name, fps_key, clips).to_json_string()
+
+
+def _build_otio_timeline(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]):
+    """The ``otio.schema.Timeline`` object :func:`build_otio` serializes (split out so tests can inspect it)."""
     _require_clips(clips, fps_key, "build_otio")
     import opentimelineio as otio  # lazy + optional; see docstring.
 
@@ -431,9 +437,8 @@ def build_otio(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]) -> s
     time_range = otio.opentime.TimeRange
 
     track = otio.schema.Track(name="V1", kind=otio.schema.TrackKind.Video)
-    for clip in clips:
-        # source_range is in the media reference's coordinates (docstring):
-        # the full source at NATIVE fps, byte-identical to available_range.
+    positions = _sequence_positions(clips, sequence_fps)
+    for clip, (_start, _end, duration) in zip(clips, positions, strict=True):
         full_source = time_range(
             rational_time(0, clip.fps), rational_time(clip.frames, clip.fps)
         )
@@ -444,7 +449,9 @@ def build_otio(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]) -> s
         otio_clip = otio.schema.Clip(
             name=clip.name,
             media_reference=media_reference,
-            source_range=full_source,
+            source_range=time_range(
+                rational_time(0, sequence_fps), rational_time(duration, sequence_fps)
+            ),
         )
         track.append(otio_clip)
 
@@ -453,4 +460,4 @@ def build_otio(sequence_name: str, fps_key: str, clips: Sequence[ClipSpec]) -> s
         global_start_time=rational_time(0, sequence_fps),
     )
     timeline.tracks.append(track)
-    return timeline.to_json_string()
+    return timeline
