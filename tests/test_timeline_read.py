@@ -503,3 +503,30 @@ def test_missing_name_falls_back_to_file_name_then_clip_n():
     parsed = parse_timeline(text)
     assert parsed.shots[0]["name"] == "only_the_file_has_a_name.mov"
     assert parsed.shots[1]["name"] == "clip 2"  # no <name> anywhere -- falls to "clip N"
+
+
+def test_minus_one_boundary_recovery_converts_source_frames_to_sequence_frames():
+    # 24 fps sequence, 48 fps clip on track 1 with an unknown start: its 96
+    # SOURCE frames last 48 SEQUENCE frames, so start = 100 - 48 = 52 (not
+    # 100 - 96 = 4). A second clip on track 2 starts at 40 and must sort first.
+    text = _wrap(
+        """
+        <track>
+          <clipitem id="clipitem-fast">
+            <name>Fast</name>
+            <rate><timebase>48</timebase><ntsc>FALSE</ntsc></rate>
+            <start>-1</start><end>100</end><in>0</in><out>96</out>
+          </clipitem>
+        </track>
+        <track>
+          <clipitem id="clipitem-mid">
+            <name>Mid</name>
+            <start>40</start><end>90</end><in>0</in><out>50</out>
+          </clipitem>
+        </track>
+        """
+    )
+    parsed = parse_timeline(text)
+
+    assert _find(parsed.shots, "Fast")["start"] == 52
+    assert [shot["name"] for shot in parsed.shots] == ["Mid", "Fast"]

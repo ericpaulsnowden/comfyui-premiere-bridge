@@ -76,7 +76,10 @@ def extract_frame(path: str, in_seconds: float) -> torch.Tensor:
             raise ValueError(f"Get Premiere Segment Frame: no video stream found in: {path}")
         stream = video_streams[0]
 
-        target_ts = max(in_seconds, 0.0) / stream.time_base
+        # `in_seconds` is relative to the media's beginning; stream timestamps
+        # are absolute and may start well after 0 (MPEG-TS, camera files).
+        origin = stream.start_time or 0
+        target_ts = origin + max(in_seconds, 0.0) / stream.time_base
         with contextlib.suppress(Exception):
             container.seek(round(target_ts), stream=stream)  # else: decode from the top instead.
 

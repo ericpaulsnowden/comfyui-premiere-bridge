@@ -195,7 +195,7 @@ def _collect_raw_shots(sequence: ET.Element, sequence_fps: float) -> list[dict[s
         track_raw = [
             _extract_clip(clip, file_registry, sequence_fps) for clip in track.findall("clipitem")
         ]
-        _resolve_track_spans(track_raw)
+        _resolve_track_spans(track_raw, sequence_fps)
         for record in track_raw:
             record["_track_index"] = track_index
         raw_shots.extend(track_raw)
@@ -297,7 +297,7 @@ def _resolve_file_element(
     return file_el
 
 
-def _resolve_track_spans(track_raw: list[dict[str, Any]]) -> None:
+def _resolve_track_spans(track_raw: list[dict[str, Any]], sequence_fps: float) -> None:
     """Fill in ``-1`` ``start``/``end`` placeholders, in place, per PROTOCOL.md §6.1.
 
     Premiere writes ``-1`` for whichever end of a clip touches a
@@ -312,6 +312,11 @@ def _resolve_track_spans(track_raw: list[dict[str, Any]]) -> None:
     ``end``; ``clipitem-12``'s recovered ``start`` == the preceding
     transition's ``start``).
 
+    ``in``/``out`` are SOURCE frames, so the span is converted to sequence
+    frames (``round(span / source_fps * sequence_fps)``, at least 1 -- the
+    writer's §3.3 rule) before it is added to or subtracted from a timeline
+    boundary; the two only coincide when the rates match.
+
     The FALLBACK -- PROTOCOL.md §6.1's "resolve from neighbors when
     possible" -- copies the adjacent clip's already-resolved boundary on
     the same track, in document order, for the rarer case where a clip's
@@ -324,9 +329,10 @@ def _resolve_track_spans(track_raw: list[dict[str, Any]]) -> None:
         start, end = record["start"], record["end"]
         if start == -1 and end == -1:
             continue  # neither edge known; nothing to derive a duration from
-        duration = record["out"] - record["in"]
-        if duration <= 0:
+        source_span = record["out"] - record["in"]
+        if source_span <= 0:
             continue  # no usable duration; leave to the neighbor-copy pass below
+        duration = max(1, round(source_span / record["source_fps"] * sequence_fps))
         if start == -1:
             record["start"] = end - duration
         elif end == -1:

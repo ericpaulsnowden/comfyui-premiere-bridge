@@ -258,6 +258,14 @@ nodes → per-shot processing ("restyle my whole edit").
   `<file><media><video><samplecharacteristics>` (`0` when the export omits
   them — real Premiere exports and our own writer include them; §8 permits
   adding keys).
+- A `<start>`/`<end>` of `-1` (Premiere writes it for the edge touching a
+  `<transitionitem>`) is recovered from the clip's own `in`/`out`: the
+  source span `out - in` is converted to SEQUENCE frames,
+  `max(1, round((out - in) / source_fps * sequence_fps))` (§3.3's
+  one-frame floor), and added to `start` / subtracted from `end`. Adding
+  the raw source-frame span is only right when `source_fps` equals
+  `sequence_fps`. Still-unknown edges are copied from the adjacent clip on
+  the same track, else left as `-1`.
 - Disabled clipitems are kept (flagged `enabled: false`) — the summary
   marks them; a `skip_disabled` BOOLEAN widget (default True) excludes them
   from `segments`/`count`.
