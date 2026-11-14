@@ -652,3 +652,26 @@ def test_execute_failed_collect_copy_leaves_the_previous_copy_untouched(
 
     assert (media / "001_c.mov").read_bytes() == b"complete-old-copy"
     assert [p.name for p in media.iterdir()] == ["001_c.mov"]
+
+
+def test_execute_collect_handles_a_filename_near_the_filesystem_limit(
+    context: BridgeContext, tmp_path: Path
+) -> None:
+    """A 242-char source name collects to a 246-char destination, which fits
+    NAME_MAX=255; the temporary sibling must fit too."""
+    long_name = "a" * 238 + ".mp4"
+    try:
+        clip = _write_path_line(tmp_path, long_name, content=b"long-bytes")
+        probe = tmp_path / ("b" * 246)
+        probe.write_bytes(b"")
+    except OSError:
+        pytest.skip("filesystem cannot create names this long")
+
+    PremiereSaveTimeline().execute(
+        sequence_name="Long", fps="24", paths=str(clip), write_edl=False,
+        write_otio=False, media="Collect into folder",
+    )
+
+    media = context.output_dir / "premiere_timelines" / "Long" / "media"
+    copies = list(media.iterdir())
+    assert len(copies) == 1 and copies[0].read_bytes() == b"long-bytes"

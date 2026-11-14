@@ -867,3 +867,28 @@ async def test_hello_does_not_block_the_event_loop_on_a_slow_share(
     # The loop kept running while the blocking call was in flight — the whole
     # point. On the loop, `ticks` would be 0.
     assert ticks > 0
+
+
+async def test_cancellation_while_closing_the_displaced_socket_never_leaves_the_slot_taken(
+    context: BridgeContext,
+) -> None:
+    """The handler is cancelled inside the old socket's close: the connection it
+    installed must be cleared, not left registered (ready=False) forever."""
+    from unittest import mock
+
+    class _Old:
+        async def close(self, **_kw):
+            raise asyncio.CancelledError
+
+    cprb_routes._connection = cprb_routes.PluginConnection(ws=_Old())
+    app = web.Application()
+    app.add_routes(build_routes(context))
+    handler = next(r for r in app.router.routes() if r.resource.canonical == "/cprb/ws").handler
+
+    with (
+        mock.patch.object(web.WebSocketResponse, "prepare", new=mock.AsyncMock()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await handler(mock.Mock())
+
+    assert cprb_routes._connection is None
