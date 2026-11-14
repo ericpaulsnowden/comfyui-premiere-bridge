@@ -334,20 +334,12 @@ def test_edl_subframe_clip_has_positive_record_length() -> None:
         assert previous[1] == current[0]
 
 
-def test_otio_subframe_clip_has_positive_duration() -> None:
+def test_otio_subframe_clip_occupies_one_sequence_frame_and_next_clip_follows() -> None:
     pytest.importorskip("opentimelineio")
-    try:
-        parsed = json.loads(build_otio("Sub", "24", _subframe_clips()))
-    except RuntimeError as exc:
-        if "any cast" in str(exc):
-            pytest.skip(f"opentimelineio cannot serialize in this environment: {exc}")
-        raise
-    clips = [
-        child
-        for track in parsed["tracks"]["children"]
-        for child in track["children"]
-        if child.get("OTIO_SCHEMA", "").startswith("Clip")
-    ]
-    assert len(clips) == 3
-    for clip in clips:
-        assert clip["source_range"]["duration"]["value"] >= 1
+    # Inspect the constructed timeline: serializing it fails in some venvs
+    # ("bad any cast"), and placement is decided before serialization anyway.
+    timeline = timeline_write._build_otio_timeline("Sub", "24", _subframe_clips())
+    track = timeline.tracks[0]
+    assert track[0].duration().rescaled_to(24).value == 1
+    assert track.range_of_child_at_index(1).start_time.rescaled_to(24).value == 1
+    assert track.range_of_child_at_index(2).start_time.rescaled_to(24).value == 2

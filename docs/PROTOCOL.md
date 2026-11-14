@@ -127,7 +127,9 @@ into Premiere, not a re-import of the same timeline. Full rules in §10.5.
   (frames + native fps); the clip occupies `round(seconds * sequence_fps)`
   sequence frames, and never fewer than ONE (a clip shorter than half a
   sequence frame would otherwise round to a zero-length clipitem Premiere
-  cannot place). Sources whose native fps differs from the sequence fps
+  cannot place). This holds for every emitted format: xmeml, EDL and OTIO
+  (whose clip `source_range` durations are written in sequence frames) all
+  place clips on the same frames. Sources whose native fps differs from the sequence fps
   are still cut at their real-time length (Premiere plays them at native
   speed inside a conformed sequence).
 - Returns: `timeline_path` (STRING — the `.xml` absolute path) and a UI
