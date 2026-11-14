@@ -114,8 +114,13 @@ def write_into_place(dest: Path, write: Any) -> None:
     encoder that picks its container from the extension still works). If it
     raises, the temp file is removed and a previously saved *dest* is left
     byte-for-byte intact -- the XML that still references it stays valid.
+
+    The temp name is ``.cprb-`` + 8 random characters + *dest*'s suffix, never
+    derived from the stem, so any *dest* name the filesystem accepts (up to
+    NAME_MAX) also has a legal temp name as long as its suffix is at most
+    ~240 characters.
     """
-    fd, tmp_name = tempfile.mkstemp(dir=str(dest.parent), prefix=f".{dest.stem}.", suffix=dest.suffix)
+    fd, tmp_name = tempfile.mkstemp(dir=str(dest.parent), prefix=".cprb-", suffix=dest.suffix)
     os.close(fd)
     tmp_path = Path(tmp_name)
     try:

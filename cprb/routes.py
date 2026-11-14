@@ -1203,10 +1203,13 @@ def _register_all(context: BridgeContext, routes: web.RouteTableDef) -> None:
         previous = _connection
         connection = PluginConnection(ws=ws)
         _connection = connection
-        if previous is not None:
-            await previous.ws.close(code=4000, message=b"replaced by a new connection")
         logger.info("cprb: plugin websocket connected")
         try:
+            # Inside the try so a cancellation while closing the displaced
+            # socket still runs the finally and never leaves this connection
+            # installed after the handler is gone.
+            if previous is not None:
+                await previous.ws.close(code=4000, message=b"replaced by a new connection")
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await _handle_plugin_message(context, connection, msg.data)
