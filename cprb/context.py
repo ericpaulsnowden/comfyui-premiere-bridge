@@ -10,13 +10,15 @@ fake ones over ``tmp_path``. Same pattern as comfyui-photoshop-bridge's
 
 from __future__ import annotations
 
-import contextlib
+import logging
 import os
 import re
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger("cprb")
 
 TIMELINES_DIRNAME = "premiere_timelines"
 
@@ -77,8 +79,10 @@ def replace_into_place(tmp_path: Path, dest: Path) -> None:
     works there. So on that error the existing file is moved aside to a
     sibling, the new one takes its name, and the sibling is dropped. If the
     new file cannot take the name, the old one is moved back and the error
-    propagates: a complete *dest* exists at every point. The caller still owns
-    removing *tmp_path* on failure. Same recovery as comfyui-epsnodes'
+    propagates. If even the move back fails, the error names the sibling the
+    old version is in; a sibling that cannot be dropped after a successful
+    save is logged. The previous version is never deleted before the new one
+    has its name. The caller still owns removing *tmp_path* on failure. Same recovery as comfyui-epsnodes'
     ``lora_library.context._replace_over_existing``.
     """
     try:
@@ -95,11 +99,27 @@ def replace_into_place(tmp_path: Path, dest: Path) -> None:
         return
     try:
         os.rename(tmp_path, dest)
-    except BaseException:
-        os.rename(aside, dest)
+    except BaseException as exc:
+        try:
+            os.rename(aside, dest)
+        except OSError as restore_exc:
+            # The previous version is intact but no longer under its name:
+            # say where, or it is a hidden file nobody knows to look for.
+            raise OSError(
+                f"could not save {dest}: {exc}; the previous version is at {aside} "
+                f"(moving it back failed: {restore_exc})"
+            ) from exc
         raise
-    with contextlib.suppress(OSError):
+    try:
         aside.unlink()
+    except OSError as exc:
+        logger.warning(
+            "cprb: saved %s, but the previous version could not be removed and is "
+            "still at %s (%s)",
+            dest,
+            aside,
+            exc,
+        )
 
 
 def _atomic_write(path: Path, data: str | bytes, encoding: str | None = "utf-8") -> None:
