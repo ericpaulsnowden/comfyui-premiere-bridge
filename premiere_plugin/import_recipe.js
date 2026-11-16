@@ -23,10 +23,11 @@
  * acquisition shape (see disableIngestBestEffort), the `setProperty`/`set`
  * Properties setters (see stampProperties, which now read-back-verifies
  * instead of trusting a write), and every createOverwriteItemAction shape
- * we shipped -- "Invalid parameter." on all attempts -- so insertAtPlayhead
- * is now a DIAGNOSTIC PROBE (its docblock has the full plan). Anything
- * still unproven on 26.3 carries a `VERIFY(...)` flag per the SPIKES.md
- * discipline: probed defensively, a throw degrades to a logged line.
+ * we shipped -- "Invalid parameter." on all attempts. The 2026-07-25 probe
+ * run then SOLVED it (SPIKES.md LIVE RESULTS): insertAtPlayhead is the one
+ * proven shape (its docblock has the detail). Anything still unproven on
+ * 26.3 carries a `VERIFY(...)` flag per the SPIKES.md discipline: probed
+ * defensively, a throw degrades to a logged line.
  *
  * The protocol fields `color_label` (node v0.9.2+) and `insert_at_playhead`
  * (node v0.9.3+) gate their steps themselves: "" / false -- the node
@@ -180,9 +181,10 @@ async function findOrCreateBin(pr, project, name) {
  * documents (research/premiere-tier2/r2 §2.3):
  * `ProjectSettings.getIngestSettings(project)` -> IngestSettings, whose
  * WHOLE documented surface is getIsIngestEnabled() / setIngestEnabled(b).
- * VERIFY(spike-S6-followup): that documented shape is still unproven live,
- * so it is probed once, remembered for the session, and never logged
- * per-import again -- at most ONE debug line per session either way.
+ * PROVEN LIVE (SPIKES.md, owner 2026-07-25, 26.3: "readable via
+ * ProjectSettings.getIngestSettings (documented shape)"). It is still
+ * probed once, remembered for the session, and never logged per-import
+ * again -- at most ONE debug line per session either way.
  * 'unknown' = not probed yet; 'ok' = accessor works; 'absent' = unusable on
  * this build, in which case imports proceed unguarded. That is acceptable:
  * ingest is off by default, every live import so far linked in place, and
@@ -703,10 +705,12 @@ async function cprbReadBackTag(pr, item, key, expected) {
  * writing, getProperties() is fetched FRESH and the constant sentinel field
  * (`comfy.source`) is read back; the log states plainly whether the tag
  * actually stuck. Setter shapes, in order:
- *   1. VERIFY(spike-S6E-set): `props.createSetValueAction(name, value,
+ *   1. `props.createSetValueAction(name, value,
  *      Constants.PropertyType.PERSISTENT)` inside one labeled transaction
  *      -- the DOCUMENTED setter (Adobe's own properties.ts sample;
- *      research/premiere-tier2/r2 §1.6d), which no live run has probed yet.
+ *      research/premiere-tier2/r2 §1.6d). PROVEN LIVE (SPIKES.md, owner
+ *      2026-07-25, 26.3: "tagged via createSetValueAction(name, value,
+ *      PERSISTENT) (read-back verified)").
  *      PERSISTENT is the documented survives-save/reload flag.
  *   2. direct assignment -- known to "take" in-session on 26.3; whether a
  *      fresh fetch still sees it is exactly what the read-back decides.
@@ -935,11 +939,9 @@ async function insertAtPlayhead(pr, project, rawItem) {
     // getVideoTrackCount() is proven; with neither readable we skip rather
     // than guess (see the docblock).
     let trackCount = null;
-    let countVia = '';
     try {
       if (typeof sequence.getVideoTrackCount === 'function') {
         trackCount = await sequence.getVideoTrackCount();
-        countVia = 'getVideoTrackCount()';
       }
     } catch (error) {
       logDebug(`insert: getVideoTrackCount threw: ${cprbErrMsg(error)}`);
@@ -949,7 +951,6 @@ async function insertAtPlayhead(pr, project, rawItem) {
         const tracks = sequence.videoTracks;
         if (tracks && typeof tracks.length === 'number') {
           trackCount = tracks.length;
-          countVia = 'videoTracks.length';
         }
       } catch (_) { /* no second reader either */ }
     }
@@ -1010,9 +1011,8 @@ async function insertAtPlayhead(pr, project, rawItem) {
 /**
  * The full M1 recipe for one `pr_result`: bin -> import -> stamp -> color ->
  * insert. Exactly ONE headline activity-log line per result ("Imported: ..."
- * or the specific failure); degraded steps add dim detail lines. (While the
- * insert PROBE lasts, a decisive insert result adds one more headline --
- * that is the datum the probe exists to surface.) Per-step errors are
+ * or the specific failure); degraded steps add dim detail lines. (A
+ * successful insert adds one more headline.) Per-step errors are
  * contained -- a failed stamp/color/insert never undoes a successful import.
  */
 async function handlePrResult(pr, msg) {

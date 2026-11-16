@@ -31,7 +31,7 @@ calling the XML output "verified" in the README.
 - [ ] **S5 — linked audio.** After S1 passes: hand-extend a golden XML with
   audio clipitems linked to the same files; confirm Premiere links video+
   audio as one clip. Gates PROTOCOL §4.1's audio follow-up.
-- [ ] **S6 — Tier-2 M0 spike round** (supersedes the old single-item S6;
+- [x] **S6 — Tier-2 M0 spike round** (supersedes the old single-item S6;
   roadmap: `research/roadmap-premiere-tier2.md` M0). The spike panel SHIPS
   in this repo — `premiere_plugin/` (v0.8.0), dev-installed via UXP
   Developer Tool — with one button per spike and a copyable log:

@@ -39,7 +39,7 @@
  *    disabling the buttons over a network hiccup.
  *  - `node.comfyClass` with a `node.constructor.comfyClass` fallback to
  *    identify a node's Python class id from `nodeCreated` (nodeClassOf()
- *    below) — the sibling file's header traces this to ComfyUI's
+ *    in api.js) — the sibling file's header traces this to ComfyUI's
  *    `services/litegraphService.ts`, which sets `comfyClass` on both the
  *    class and its prototype for exactly this feature-detection purpose.
  *  - Two findings from that file's header carry over unchanged: (1)
@@ -149,6 +149,7 @@
  */
 
 import * as api from './api.js'
+import { findWidget, nodeClassOf } from './api.js'
 
 /** PROTOCOL.md §8 — frozen node class ids. */
 const LOAD_CLASS = 'PremiereLoadTimeline'
@@ -402,30 +403,6 @@ function frontTruncate(text, maxChars = 56) {
   const value = String(text ?? '')
   if (value.length <= maxChars) return value
   return `…${value.slice(-(maxChars - 1))}`
-}
-
-// ---------------------------------------------------------------------------
-// Node / widget lookups
-// ---------------------------------------------------------------------------
-
-/**
- * @param {object} node
- * @returns {string|null} the node's ComfyUI class id, or null if it can't
- * be determined.
- */
-function nodeClassOf(node) {
-  if (!node) return null
-  if (node.comfyClass) return node.comfyClass
-  if (node.constructor && node.constructor.comfyClass) return node.constructor.comfyClass
-  return null
-}
-
-/**
- * @param {object} node
- * @param {string} name
- */
-function findWidget(node, name) {
-  return node.widgets?.find((w) => w && w.name === name)
 }
 
 // ---------------------------------------------------------------------------
