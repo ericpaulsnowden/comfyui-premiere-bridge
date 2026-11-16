@@ -19,12 +19,7 @@ purpose).
 | Comments that called settled questions "unproven" now cite the SPIKES result | `export_source.js` (file readers, `getFrameSize`, linked A/V), `import_recipe.js` (insert, ingest guard, property setter), `timeline_write.py` (UNC pathurl); S6 box ticked in `SPIKES.md` | v0.16.5 |
 | Frontend modules are loaded by a test (`tests/test_frontend_modules_js.py`) | No test imported `web/cprb/*.js` together before | v0.16.5 |
 | Folder browser: `..` from `/` returns to the roots list on macOS and Linux | `_fs_root_parent` returned `null` for `/`; EPSNodes fixed the same dead end on 2026-07-26 | v0.16.6 |
-
-## Open: drift that changes behaviour
-
-| Item | Evidence |
-| --- | --- |
-| Saving over an existing file should work on shares that refuse `os.replace` | Only EPSNodes handles `FileExistsError` from gvfs/FUSE mounts |
+| Saving over an existing file works on shares that refuse `os.replace` | Only EPSNodes handled `FileExistsError` from gvfs/FUSE mounts; `cprb.context.replace_into_place` now recovers for timelines and media | v0.16.7 |
 
 ## Needs Premiere: settled-spike leftovers in the panel
 
