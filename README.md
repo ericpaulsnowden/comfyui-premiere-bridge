@@ -190,7 +190,9 @@ also shows a summary of every file it wrote.
   by their line if you pick *Collect into folder* (a name that would clash with
   another file from the same save gets `_2`, `_3`... added, so nothing is
   overwritten). Files are written whole or not at all: a failed encode or copy
-  leaves the previous file in place.
+  leaves the previous file in place. Saving again over an existing timeline
+  also works on network shares that refuse to replace a file by renaming
+  (SMB shares mounted through the Linux desktop).
 - `<name>.edl` / `<name>.otio` — only when you tick those boxes.
 
 The folder name and file stems are sanitized, so illegal characters in

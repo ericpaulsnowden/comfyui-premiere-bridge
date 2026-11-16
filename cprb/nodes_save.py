@@ -35,6 +35,7 @@ from .context import (
     BridgeContext,
     _atomic_write,
     output_dir_override_is_rejected,
+    replace_into_place,
     sanitize_name,
 )
 
@@ -110,7 +111,7 @@ def write_into_place(dest: Path, write: Any) -> None:
     """Call ``write(temp_path)``, then move the result onto *dest*.
 
     *write* never touches *dest* itself: it fills a uniquely named sibling
-    (same directory, so the final ``os.replace`` is atomic; same suffix, so an
+    (same directory, so the final move is atomic; same suffix, so an
     encoder that picks its container from the extension still works). If it
     raises, the temp file is removed and a previously saved *dest* is left
     byte-for-byte intact -- the XML that still references it stays valid.
@@ -125,7 +126,7 @@ def write_into_place(dest: Path, write: Any) -> None:
     tmp_path = Path(tmp_name)
     try:
         write(str(tmp_path))
-        os.replace(tmp_path, dest)
+        replace_into_place(tmp_path, dest)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise

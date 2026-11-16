@@ -88,3 +88,95 @@ def test_failed_replace_keeps_old_content_and_no_temp(
 
     assert target.read_text(encoding="utf-8") == "old"
     assert _entries(tmp_path) == {"seq.xml"}
+
+
+# --- shares that refuse to rename onto an existing name ---------------------
+#
+# gvfs/FUSE network mounts (a Linux box with an SMB share mounted through the
+# desktop) raise FileExistsError from os.replace when the destination exists,
+# although POSIX says rename replaces. A rename to a FREE name does work there.
+
+
+@pytest.fixture()
+def refusing_share(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make os.replace and os.rename refuse an existing destination."""
+    import os
+
+    real_replace, real_rename = os.replace, os.rename
+
+    def replace(src: object, dst: object) -> None:
+        if Path(str(dst)).exists():
+            raise FileExistsError(17, "File exists", str(dst))
+        real_replace(src, dst)
+
+    def rename(src: object, dst: object) -> None:
+        if Path(str(dst)).exists():
+            raise FileExistsError(17, "File exists", str(dst))
+        real_rename(src, dst)
+
+    monkeypatch.setattr("cprb.context.os.replace", replace)
+    monkeypatch.setattr("cprb.context.os.rename", rename)
+
+
+def test_overwrite_succeeds_on_a_share_that_refuses_replace(
+    tmp_path: Path, refusing_share: None
+) -> None:
+    target = tmp_path / "seq.xml"
+    target.write_text("old", encoding="utf-8")
+
+    _atomic_write(target, "new", encoding="utf-8")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert _entries(tmp_path) == {"seq.xml"}
+
+
+def test_first_write_is_unaffected_on_a_share_that_refuses_replace(
+    tmp_path: Path, refusing_share: None
+) -> None:
+    target = tmp_path / "seq.xml"
+
+    _atomic_write(target, "new", encoding="utf-8")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert _entries(tmp_path) == {"seq.xml"}
+
+
+def test_old_content_comes_back_when_the_new_file_cannot_take_the_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The share refuses the replace AND then refuses the temp's rename."""
+    import os
+
+    target = tmp_path / "seq.xml"
+    target.write_text("old", encoding="utf-8")
+    real_rename = os.rename
+
+    def replace(src: object, dst: object) -> None:
+        raise FileExistsError(17, "File exists", str(dst))
+
+    def rename(src: object, dst: object) -> None:
+        if str(src).endswith(".tmp"):
+            raise OSError("share went away")
+        real_rename(src, dst)
+
+    monkeypatch.setattr("cprb.context.os.replace", replace)
+    monkeypatch.setattr("cprb.context.os.rename", rename)
+    with pytest.raises(OSError, match="share went away"):
+        _atomic_write(target, "new", encoding="utf-8")
+
+    assert target.read_text(encoding="utf-8") == "old"
+    assert _entries(tmp_path) == {"seq.xml"}
+
+
+def test_media_overwrite_succeeds_on_a_share_that_refuses_replace(
+    tmp_path: Path, refusing_share: None
+) -> None:
+    from cprb.nodes_save import write_into_place
+
+    target = tmp_path / "001_video_1.mp4"
+    target.write_bytes(b"old clip")
+
+    write_into_place(target, lambda tmp: Path(tmp).write_bytes(b"new clip"))
+
+    assert target.read_bytes() == b"new clip"
+    assert _entries(tmp_path) == {"001_video_1.mp4"}
