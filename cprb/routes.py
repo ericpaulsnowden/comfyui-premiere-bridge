@@ -326,11 +326,14 @@ def _fs_root_parent(directory: Path, *, windows: bool) -> str | None:
     - UNC share root (``\\\\server\\share``): reports ``null`` even on
       Windows — there is no portable way to enumerate a server's other
       shares, so there is nothing to climb to.
-    - POSIX root (``/``): reports ``null`` — it has no sibling to climb to.
+    - POSIX root (``/``): climbs to ``"ROOTS"`` too. ``ROOTS`` is a labeled
+      list on every platform (default folder, Home, volumes), so ``/`` has
+      somewhere to climb back to; reporting ``null`` left the picker with no
+      way out of ``/`` once entered.
     """
-    if windows and not _is_unc_share_root(directory):
-        return ROOTS
-    return None
+    if windows and _is_unc_share_root(directory):
+        return None
+    return ROOTS
 
 
 def _reveal_folder(path: Path) -> None:
