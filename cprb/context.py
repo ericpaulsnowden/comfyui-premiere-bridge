@@ -10,6 +10,7 @@ fake ones over ``tmp_path``. Same pattern as comfyui-photoshop-bridge's
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import tempfile
@@ -66,6 +67,41 @@ def output_dir_override_is_rejected(output_dir: str) -> bool:
     return bool((output_dir or "").strip()) and not output_dir_override_is_valid(output_dir)
 
 
+def replace_into_place(tmp_path: Path, dest: Path) -> None:
+    """Move the finished *tmp_path* onto *dest*, replacing what is there.
+
+    ``os.replace`` does this atomically on an ordinary filesystem. gvfs/FUSE
+    network mounts (a Linux box with an SMB share mounted through the desktop,
+    e.g. ``/run/user/1000/gvfs/smb-share:...``) refuse it with
+    ``FileExistsError`` when *dest* exists, although a rename to a FREE name
+    works there. So on that error the existing file is moved aside to a
+    sibling, the new one takes its name, and the sibling is dropped. If the
+    new file cannot take the name, the old one is moved back and the error
+    propagates: a complete *dest* exists at every point. The caller still owns
+    removing *tmp_path* on failure. Same recovery as comfyui-epsnodes'
+    ``lora_library.context._replace_over_existing``.
+    """
+    try:
+        os.replace(tmp_path, dest)
+        return
+    except FileExistsError:
+        pass
+    aside = dest.with_name(f".cprb-{os.urandom(4).hex()}.bak")
+    try:
+        os.rename(dest, aside)
+    except FileNotFoundError:
+        # *dest* vanished since the refusal: the name is free now.
+        os.rename(tmp_path, dest)
+        return
+    try:
+        os.rename(tmp_path, dest)
+    except BaseException:
+        os.rename(aside, dest)
+        raise
+    with contextlib.suppress(OSError):
+        aside.unlink()
+
+
 def _atomic_write(path: Path, data: str | bytes, encoding: str | None = "utf-8") -> None:
     """Write *data* to *path* without ever exposing a partially-written file.
 
@@ -77,8 +113,9 @@ def _atomic_write(path: Path, data: str | bytes, encoding: str | None = "utf-8")
     This instead writes to a fresh, uniquely-named temp file in the SAME
     directory as *path* (:func:`tempfile.mkstemp` there rather than in any
     system temp location, guaranteeing the same filesystem so the final step
-    is a true atomic rename, never a cross-filesystem copy) and only
-    ``os.replace()``s it onto *path* once the write has fully returned. Any
+    is a true atomic rename, never a cross-filesystem copy) and only moves
+    it onto *path* (:func:`replace_into_place`) once the write has fully
+    returned. Any
     exception along the way leaves a pre-existing *path* byte-for-byte
     untouched, removes the temp file rather than leaving it behind, and
     propagates -- never swallowed. Same shape as comfyui-photoshop-bridge's
@@ -100,7 +137,7 @@ def _atomic_write(path: Path, data: str | bytes, encoding: str | None = "utf-8")
             tmp_path.write_bytes(data)
         else:
             tmp_path.write_text(data, encoding=encoding)
-        os.replace(tmp_path, path)
+        replace_into_place(tmp_path, path)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
