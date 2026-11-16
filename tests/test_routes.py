@@ -423,31 +423,32 @@ async def test_fs_list_drive_root_parent_climbs_to_roots_under_monkeypatched_win
     assert data["parent"] == "ROOTS"
 
 
-async def test_fs_list_posix_root_parent_is_null_when_not_windows(
+async def test_fs_list_posix_root_parent_is_roots_when_not_windows(
     client, monkeypatch, tmp_path: Path
 ) -> None:
-    # Pinned to the non-Windows branch so it holds on a Windows host too
-    # (where the real `_is_windows` would, correctly, answer "ROOTS").
+    # `/` climbs back to the labeled roots list (default folder, Home,
+    # volumes), or the picker has no way out of `/` once entered. Pinned to
+    # the non-Windows branch so it holds on a Windows host too.
     root = _listable_fs_root(tmp_path)
     monkeypatch.setattr(cprb_routes, "_is_windows", lambda: False)
     response = await client.get("/cprb/fs/list", params={"dir": str(root)})
     data = await response.json()
     assert response.status == 200, data
     assert data["dir"] == str(root)
-    assert data["parent"] is None
+    assert data["parent"] == "ROOTS"
 
 
 async def test_fs_list_root_parent_follows_the_real_host_without_monkeypatching(
     client, tmp_path: Path
 ) -> None:
     # No seams patched: whatever the real host is, a filesystem root's parent
-    # is the drive list on Windows and null everywhere else.
+    # is the roots list (a drive root on Windows, `/` elsewhere).
     root = _listable_fs_root(tmp_path)
     response = await client.get("/cprb/fs/list", params={"dir": str(root)})
     data = await response.json()
     assert response.status == 200, data
     assert data["dir"] == str(root)
-    assert data["parent"] == ("ROOTS" if os.name == "nt" else None)
+    assert data["parent"] == "ROOTS"
 
 
 def test_is_unc_share_root_detects_a_share_root() -> None:
@@ -468,8 +469,8 @@ def test_fs_root_parent_is_null_for_a_unc_share_root_even_on_windows() -> None:
     assert cprb_routes._fs_root_parent(Path(r"\\server\share"), windows=True) is None
 
 
-def test_fs_root_parent_is_null_on_posix() -> None:
-    assert cprb_routes._fs_root_parent(Path("/"), windows=False) is None
+def test_fs_root_parent_is_roots_on_posix() -> None:
+    assert cprb_routes._fs_root_parent(Path("/"), windows=False) == "ROOTS"
 
 
 # -------------------------------------------------------------- open_folder
