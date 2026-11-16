@@ -123,9 +123,9 @@ def _encode_pathurl(path: str) -> str:
     Three forms, matched on the BACKSLASH-NORMALIZED string:
 
     * UNC (``\\\\host\\share\\...``) -> ``file://host/share/...``, host in
-      the authority slot. VERIFY(spike-S2): SPIKES.md S2 -- which pathurl
-      form Premiere actually links for UNC media is unconfirmed; this is the
-      form PROTOCOL.md §4.3 currently specifies.
+      the authority slot. PROVEN LIVE (SPIKES.md S2, owner 2026-07-20):
+      Premiere imported the XML with NAS/UNC media linked online in this
+      form, which is what PROTOCOL.md §4.3 specifies.
     * Windows drive (``C:\\...``) -> ``file://localhost/C%3a/...``: the
       drive letter's colon is encoded to a LOWERCASE ``%3a`` specifically
       (``urllib.parse.quote`` alone would produce uppercase ``%3A``; §4.3's

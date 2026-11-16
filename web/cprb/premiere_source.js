@@ -62,7 +62,7 @@
 
 import { app } from '../../../scripts/app.js'
 import { api } from '../../../scripts/api.js'
-import { warn } from './api.js'
+import { basename, findWidget, nodeClassOf, toast, warn } from './api.js'
 import { collectGraphNodes } from './graph_nodes.js'
 import { getAutoRun } from './settings.js'
 
@@ -102,37 +102,6 @@ const KINDS = {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Node / widget lookups (nodes.js's helpers, kept local — that module owns
-// the §7.3 file bar and exports none of these)
-// ---------------------------------------------------------------------------
-
-/**
- * A node's Python class id. `comfyClass` is what ComfyUI's
- * `services/litegraphService.ts` stamps onto both the generated class and
- * its prototype for exactly this purpose, so it is checked first (both
- * spellings, as `nodes.js` does); `type` is the litegraph-level fallback,
- * which is what a node deserialized from a saved workflow carries before
- * anything re-registers it.
- * @param {object} node
- * @returns {string|null}
- */
-function nodeClassOf(node) {
-  if (!node) return null
-  if (node.comfyClass) return node.comfyClass
-  if (node.constructor && node.constructor.comfyClass) return node.constructor.comfyClass
-  if (node.type) return node.type
-  return null
-}
-
-/**
- * @param {object} node
- * @param {string} name
- */
-function findWidget(node, name) {
-  return node.widgets?.find((w) => w && w.name === name)
-}
-
 /** Every node in the open graph, subgraph contents included. */
 function graphNodes() {
   return collectGraphNodes(app.graph)
@@ -164,24 +133,6 @@ function setWidgetValue(widget, value) {
     warn(`${widget.name} widget callback threw`, error)
   }
   return true
-}
-
-// ---------------------------------------------------------------------------
-// Toasts
-// ---------------------------------------------------------------------------
-
-function toast(options) {
-  try {
-    app.extensionManager?.toast?.add?.(options)
-  } catch (error) {
-    warn('toast failed', error)
-  }
-}
-
-/** Trailing path component, for a toast summary that fits on one line. */
-function basename(path) {
-  const parts = String(path || '').split(/[\\/]/)
-  return parts[parts.length - 1] || String(path || '')
 }
 
 /** `n` nodes, pluralized: "1 node" / "3 nodes". */

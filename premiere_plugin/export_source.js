@@ -327,9 +327,9 @@ function cprbLooksMissing(message) {
 /**
  * true (exists) / false (provably absent) / null (cannot tell -- no fs
  * access on this build+manifest). Two readers, each fully guarded.
- * VERIFY(M2-live): neither reader is proven on Premiere 26.3 under
- * `localFileSystem: "request"`; `null` is the expected answer there and is
- * handled honestly by the caller.
+ * SETTLED LIVE (SPIKES.md S7-b, owner 2026-07-26, 26.3): under
+ * `localFileSystem: "request"` both readers refuse, so `null` is the answer
+ * on every real install and is handled honestly by the caller.
  */
 async function cprbFileExists(fullPath) {
   // Already proven unreadable this session -- say nothing, look at nothing.
@@ -487,7 +487,8 @@ function cprbLogExporterProbe(pr) {
  * secondary probe. Both are logged when they misbehave, and a total failure
  * ABORTS the export rather than guessing a size -- a mismatched pair yields a
  * stretched frame with no error, which is worse than no frame at all.
- * VERIFY(M2-live): getFrameSize()'s live shape on 26.3.
+ * PROVEN LIVE (SPIKES.md S7-b, owner 2026-07-26, 26.3): getFrameSize()
+ * works and reported 704x704; the secondary probe was not needed.
  */
 async function cprbReadFrameSize(sequence) {
   try {
@@ -790,8 +791,8 @@ async function cprbSendFrameToComfyUI() {
  * exposes a static `.cast()`, so the documented-surface discriminator is
  * duck-typing on `createAddVideoTransitionAction` -- present on
  * VideoClipTrackItem, absent from AudioClipTrackItem's documented method
- * list. VERIFY(M2-live): a linked A/V click's item count and order are
- * undocumented. */
+ * list. PROVEN LIVE (SPIKES.md S7-c, owner 2026-07-26): a linked A/V click
+ * returns TWO track items and this duck-type picked the video one. */
 function cprbIsVideoTrackItem(item) {
   return !!(item && typeof item.createAddVideoTransitionAction === 'function');
 }

@@ -26,7 +26,7 @@
 
 import { app } from '../../../scripts/app.js'
 import { api } from '../../../scripts/api.js'
-import { warn } from './api.js'
+import { basename, nodeClassOf, toast, warn } from './api.js'
 
 /* ------------------------ on-node status line -------------------------
  * The owner reported "I don't see an error/warning message anywhere"
@@ -45,17 +45,6 @@ const STATUS_WIDGET_NAME = 'cprb_send_status'
 
 /** The only class this module may paint (PROTOCOL.md §8's frozen id). */
 const SEND_RESULT_CLASS = 'PremiereSendResult'
-
-/** A node's ComfyUI class id — premiere_source.js's exact helper shape
- * (comfyClass, constructor fallback, then `type`); litegraphService.ts sets
- * `comfyClass` on both the class and its prototype for this purpose. */
-function nodeClassOf(node) {
-  if (!node) return null
-  if (node.comfyClass) return node.comfyClass
-  if (node.constructor && node.constructor.comfyClass) return node.constructor.comfyClass
-  if (node.type) return node.type
-  return null
-}
 
 /** Finds the Send-to-Premiere node by the id ComfyUI reported to the
  * backend (string vs number safe — UNIQUE_ID arrives as a string, litegraph
@@ -103,23 +92,9 @@ function paintNodeStatus(nodeId, text, isWarning) {
   }
 }
 
-/** Trailing path component, for a toast summary that fits on one line. */
-function basename(path) {
-  const parts = String(path || '').split(/[\\/]/)
-  return parts[parts.length - 1] || String(path || '')
-}
-
 /** `n` items, pluralized: "1 result" / "3 results". */
 function countLabel(n) {
   return `${n} result${n === 1 ? '' : 's'}`
-}
-
-function toast(options) {
-  try {
-    app.extensionManager?.toast?.add?.(options)
-  } catch (error) {
-    warn('toast failed', error)
-  }
 }
 
 /**
