@@ -180,3 +180,63 @@ def test_media_overwrite_succeeds_on_a_share_that_refuses_replace(
 
     assert target.read_bytes() == b"new clip"
     assert _entries(tmp_path) == {"001_video_1.mp4"}
+
+
+def test_a_failed_move_back_says_where_the_previous_version_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refused replace, then the new file AND the move back both fail.
+
+    The previous version cannot be put back, so the error must name the
+    sibling it now lives in -- otherwise it is a hidden file nobody knows of.
+    """
+    import os
+
+    target = tmp_path / "seq.xml"
+    target.write_text("old", encoding="utf-8")
+    real_rename = os.rename
+
+    def replace(src: object, dst: object) -> None:
+        raise FileExistsError(17, "File exists", str(dst))
+
+    def rename(src: object, dst: object) -> None:
+        if str(dst) == str(target):
+            raise OSError("share went away")
+        real_rename(src, dst)
+
+    monkeypatch.setattr("cprb.context.os.replace", replace)
+    monkeypatch.setattr("cprb.context.os.rename", rename)
+    with pytest.raises(OSError) as raised:
+        _atomic_write(target, "new", encoding="utf-8")
+
+    survivors = _entries(tmp_path)
+    assert len(survivors) == 1
+    kept = tmp_path / survivors.pop()
+    assert kept.read_text(encoding="utf-8") == "old"
+    assert str(kept) in str(raised.value)
+
+
+def test_a_previous_version_that_cannot_be_removed_is_reported(
+    tmp_path: Path,
+    refusing_share: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The save succeeded; a leftover copy must be named, not hidden."""
+    target = tmp_path / "seq.xml"
+    target.write_text("old", encoding="utf-8")
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.endswith(".bak"):
+            raise PermissionError("locked")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level("WARNING", logger="cprb"):
+        _atomic_write(target, "new", encoding="utf-8")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    leftovers = _entries(tmp_path) - {"seq.xml"}
+    assert len(leftovers) == 1
+    assert str(tmp_path / leftovers.pop()) in caplog.text
